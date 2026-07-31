@@ -1,0 +1,33 @@
+# SolidworksMCP Dependencies
+# Author: Samsaam Ali Baig
+# Updated: 2026-07-31
+
+# MCP SDK
+mcp>=1.0.0
+
+# Async support
+#asyncio-compat>=0.1.0
+
+# Logging and utilities
+python-dotenv>=1.0.0
+
+# ===== NEW: Direct COM Automation =====
+# pywin32 for proper COM automation with error handling
+pywin32>=306
+
+# Deterministic raster-to-CAD and vector validation backend
+numpy>=1.26
+scipy>=1.12
+opencv-python-headless>=4.10
+scikit-image>=0.22
+shapely>=2.0
+Pillow>=10.2
+
+# Verified deep silhouette vectorization backend.  A CUDA build of PyTorch is
+# required; get_capabilities reports the active GPU and cached model state.
+torch>=2.6,<2.8
+transformers>=4.57,<5
+huggingface-hub>=0.36,<1
+
+# For COM VARIANT types (ByRef parameters)
+# pythoncom is included with pywin32

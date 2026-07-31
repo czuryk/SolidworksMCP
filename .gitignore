@@ -1,0 +1,73 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Virtual environments and packaging output
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Local editor and agent state
+.idea/
+.vscode/
+.claude/
+.codex/
+*.code-workspace
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+config.local.json
+*.local.json
+
+# Runtime state
+*.log
+*.pid
+logs/
+checkpoints/
+
+# Generated test and acceptance artifacts
+tmp/
+temp/
+artifacts/
+outputs/
+reports/
+screenshots/
+tests/manual_*.py
+tests/*_probe.py
+/*_probe.*
+/*_acceptance.*
+/*_checkpoint.*
+~$*.SLDPRT
+~$*.SLDASM
+~$*.SLDDRW
+
+# Generic temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*.rej
+*.swp
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
