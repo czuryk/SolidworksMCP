@@ -7,6 +7,8 @@ and a mandatory supersampled reverse-rasterized quality gate.
 
 from __future__ import annotations
 
+from .com_utils import com_get
+
 import json
 import math
 import os
@@ -17,6 +19,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..constants import SwErrors
 from .runtime import atomic_json_write, structured_error
+
+
+class CurveFitError(ValueError):
+    """Curve candidate rejection with machine-readable diagnostics."""
+
+    def __init__(self, message, diagnostics):
+        super().__init__(message)
+        self.diagnostics = diagnostics
 
 
 class ImageSketchOperations:
@@ -546,8 +556,8 @@ class ImageSketchOperations:
             for index in range(pair_count):
                 left = entities[index]
                 right = entities[(index + 1) % len(entities)]
-                if (left["type"] not in {"circle", "b_spline"} and
-                        right["type"] not in {"circle", "b_spline"}):
+                if (left["type"] != "circle" and right["type"] != "circle" and
+                        not left.get("periodic") and not right.get("periodic")):
                     constraints.append({
                         "type": "coincident",
                         "entities": [
@@ -827,7 +837,7 @@ class ImageSketchOperations:
                 "start": a.tolist(), "end": b.tolist()}
 
     @staticmethod
-    def _circle_fit(points):
+    def _circle_fit(points, preserve_endpoints=False):
         import numpy as np
         from scipy.optimize import least_squares
         points = np.asarray(points, dtype=float)
@@ -844,6 +854,23 @@ class ImageSketchOperations:
                 [cx, cy, radius], loss="soft_l1",
                 f_scale=max(radius * 1e-4, 1e-6))
             cx, cy, radius = fitted.x
+            if preserve_endpoints:
+                chord = points[-1] - points[0]
+                length = float(np.linalg.norm(chord))
+                if length <= 1e-9:
+                    return None
+                midpoint = (points[0] + points[-1]) * 0.5
+                normal = np.array([-chord[1], chord[0]]) / length
+                offset = float(np.dot(np.array([cx, cy]) - midpoint, normal))
+                def residual(value):
+                    center = midpoint + normal * value[0]
+                    r = np.hypot(length * 0.5, value[0])
+                    return np.linalg.norm(points - center, axis=1) - r
+                constrained = least_squares(
+                    residual, [offset], loss="soft_l1",
+                    f_scale=max(radius * 1e-4, 1e-6))
+                cx, cy = midpoint + normal * constrained.x[0]
+                radius = float(np.hypot(length * 0.5, constrained.x[0]))
             if radius <= 0 or not np.isfinite(radius):
                 return None
             errors = np.abs(np.hypot(x - cx, y - cy) - radius)
@@ -1024,7 +1051,7 @@ class ImageSketchOperations:
             if len(segment_points) < 2:
                 continue
             line = self._line_fit(segment_points)
-            arc = self._circle_fit(segment_points)
+            arc = self._circle_fit(segment_points, preserve_endpoints=True)
             candidates = []
             if "line" in prefer and line and line["max_error"] <= max_error:
                 candidates.append((line["mean_error"] + max_error * 0.02,
@@ -1213,6 +1240,10 @@ class ImageSketchOperations:
                 controls = np.column_stack(tck[1]).astype(float)
                 if len(knots) != len(controls) + 4:
                     raise ValueError("SciPy returned an invalid open knot vector")
+                # Clamped cubic endpoints must preserve the source seam exactly.
+                # Score the modified curve, not the unconstrained smoothing fit.
+                controls[0] = points[0]
+                controls[-1] = points[-1]
                 entity = {
                     "type": "b_spline", "order": 4, "periodic": False,
                     "knots": knots.tolist(),
@@ -1252,6 +1283,146 @@ class ImageSketchOperations:
             "accepted_candidates": len(accepted),
             "control_points": len(chosen["control_points"]),
             "fit_error_mm": float(chosen["fit_error_mm"]),
+        }
+
+    def _fit_curvature_split_closed_bspline(
+            self, points_mm, max_error, max_entities, approximation):
+        """Fit a closed contour as bounded open splines joined at curvature seams."""
+        import numpy as np
+        from scipy.signal import savgol_filter
+
+        tolerance = max(1e-4, min(float(max_error), float(
+            approximation.get("explicit_spline_tolerance_mm",
+                              float(max_error) * 0.8))))
+        per_spline_cap = int(approximation.get(
+            "max_control_points_per_spline", 64))
+        total_cap = int(approximation.get(
+            "max_total_control_points", 1000000))
+        entity_cap = min(int(max_entities), 16)
+        dense = self._resample_closed(
+            points_mm, max(0.002, min(0.01, tolerance * 0.08)))
+        if len(dense) < 12 or entity_cap < 2:
+            return None, {
+                "reason": "curvature_split_unavailable",
+                "source_points": int(len(dense)),
+                "max_entities": int(max_entities),
+            }
+
+        window = min(31, len(dense) if len(dense) % 2 else len(dense) - 1)
+        window = max(5, window)
+        x = savgol_filter(dense[:, 0], window, 3, mode="wrap")
+        y = savgol_filter(dense[:, 1], window, 3, mode="wrap")
+        tangent = np.unwrap(np.arctan2(np.gradient(y), np.gradient(x)))
+        curvature = np.abs(np.gradient(tangent))
+        anchor = int(np.argmax(curvature))
+        attempts = []
+        for count in range(2, entity_cap + 1):
+            boundaries = []
+            half_window = max(2, len(dense) // (count * 5))
+            for part in range(count):
+                target = (anchor + round(part * len(dense) / count)) % len(dense)
+                candidates = [
+                    (target + delta) % len(dense)
+                    for delta in range(-half_window, half_window + 1)]
+                boundaries.append(max(candidates, key=lambda i: curvature[i]))
+            boundaries = sorted(set(boundaries))
+            if len(boundaries) != count:
+                attempts.append({
+                    "entities": count,
+                    "reason": "curvature_seams_collapsed",
+                    "seams_found": len(boundaries),
+                })
+                continue
+            extended = np.vstack([dense, dense])
+            ordered = boundaries + [boundaries[0] + len(dense)]
+            entities = []
+            segment_reports = []
+            rejected = None
+            for segment_index, (start, end) in enumerate(
+                    zip(ordered, ordered[1:])):
+                segment = extended[start:end + 1]
+                fitted, report = self._fit_open_bspline(
+                    segment, tolerance, per_spline_cap)
+                if fitted is None:
+                    rejected = {
+                        "reason": "segment_fit_rejected",
+                        "segment_index": segment_index,
+                        "fit": report,
+                    }
+                    break
+                # Clamped open splines must share the exact source seam.
+                fitted["control_points"][0] = segment[0].tolist()
+                fitted["control_points"][-1] = segment[-1].tolist()
+                sampled = self._sample_fitted_entity(
+                    fitted, step=max(0.002, min(0.01, tolerance * 0.08)))
+                local_error = self._symmetric_curve_error(segment, sampled)
+                fitted["fit_error_mm"] = local_error
+                fitted["fit_reason"] = (
+                    "closed silhouette split at a stable curvature transition; "
+                    "bounded non-periodic cubic NURBS fit accepted")
+                fitted["curvature_split"] = {
+                    "segment_index": segment_index,
+                    "segment_count": count,
+                    "start_source_index": int(start % len(dense)),
+                    "end_source_index": int(end % len(dense)),
+                }
+                entities.append(fitted)
+                segment_reports.append({
+                    "segment_index": segment_index,
+                    "source_points": int(len(segment)),
+                    "control_points": len(fitted["control_points"]),
+                    "fit_error_mm": float(local_error),
+                })
+            total_controls = sum(len(entity.get("control_points", []))
+                                 for entity in entities)
+            if rejected is None and total_controls > total_cap:
+                rejected = {
+                    "reason": "total_control_budget_exceeded",
+                    "total_control_points": total_controls,
+                    "max_total_control_points": total_cap,
+                }
+            global_error = float("inf")
+            if rejected is None:
+                samples = [self._sample_fitted_entity(
+                    entity, step=max(0.002, min(0.01, tolerance * 0.08)))
+                    for entity in entities]
+                global_error = self._symmetric_curve_error(
+                    dense, np.vstack(samples))
+                if global_error > float(max_error):
+                    rejected = {
+                        "reason": "global_error_exceeded",
+                        "global_fit_error_mm": global_error,
+                        "max_error_mm": float(max_error),
+                    }
+            attempt = {
+                "entities": count,
+                "seam_source_indices": [int(i) for i in boundaries],
+                "total_control_points": total_controls,
+                "global_fit_error_mm": global_error,
+                "segments": segment_reports,
+                "rejection": rejected,
+            }
+            attempts.append(attempt)
+            if rejected is None:
+                report = {
+                    "reason": "accepted_curvature_split",
+                    "entities": len(entities),
+                    "total_control_points": total_controls,
+                    "max_control_points_per_spline": max(
+                        len(entity["control_points"])
+                        for entity in entities),
+                    "global_fit_error_mm": float(global_error),
+                    "chosen": attempt,
+                    "attempts": attempts,
+                }
+                return entities, report
+        return None, {
+            "reason": "curvature_split_candidates_rejected",
+            "tolerance_mm": tolerance,
+            "max_error_mm": float(max_error),
+            "max_control_points_per_spline": per_spline_cap,
+            "max_total_control_points": total_cap,
+            "attempts": attempts,
         }
 
     @staticmethod
@@ -1440,6 +1611,23 @@ class ImageSketchOperations:
         explicit_entities, explicit_diagnostics = (
             self._materialize_explicit_splines(
                 hybrid_entities, points_mm, max_error, approximation))
+        primary_explicit_diagnostics = explicit_diagnostics
+        if explicit_entities is None:
+            split_entities, split_diagnostics = (
+                self._fit_curvature_split_closed_bspline(
+                    points_mm, max_error, max_entities, approximation))
+            explicit_diagnostics = {
+                "reason": ("accepted_curvature_split" if split_entities
+                           is not None else "all_explicit_candidates_rejected"),
+                "initial_hybrid_rejection": primary_explicit_diagnostics,
+                "curvature_split": split_diagnostics,
+            }
+            if split_entities is not None:
+                explicit_entities = split_entities
+                hybrid_entities = split_entities
+                hybrid_error = float(split_diagnostics[
+                    "global_fit_error_mm"])
+                explicit_diagnostics["global_fit_error_mm"] = hybrid_error
         if explicit_entities is not None:
             hybrid_entities = explicit_entities
             hybrid_error = max(
@@ -1460,12 +1648,19 @@ class ImageSketchOperations:
 
         if strategy == "hybrid_primitives" or "spline" not in prefer:
             if not hybrid_valid:
-                raise ValueError(
+                diagnostics = {
+                    "reason": "hybrid_candidate_rejected",
+                    "complexity": hybrid_complexity,
+                    "fit_error_mm": float(hybrid_error),
+                    "max_error_mm": float(max_error),
+                    "explicit_splines": explicit_diagnostics,
+                }
+                raise CurveFitError(
                     "Hybrid primitive fit exceeded the accuracy or complexity "
-                    f"budget: {hybrid_complexity}, fit_error_mm={hybrid_error}, "
-                    f"explicit_splines={explicit_diagnostics}")
+                    "budget", diagnostics)
             for entity in hybrid_entities:
                 entity["curve_strategy"] = "hybrid_primitives"
+                entity["fit_candidate_diagnostics"] = explicit_diagnostics
             return hybrid_entities, hybrid_error
 
         dense = self._resample_closed(
@@ -1490,9 +1685,11 @@ class ImageSketchOperations:
 
         if strategy == "periodic_bspline":
             if not b_valid:
-                raise ValueError(
+                raise CurveFitError(
                     "Periodic B-spline could not satisfy the accuracy and "
-                    f"complexity budgets: {b_spline_diagnostics}")
+                    "complexity budgets", {
+                        "reason": "periodic_bspline_candidate_rejected",
+                        "periodic_bspline": b_spline_diagnostics})
             return b_entities, float(b_spline["fit_error_mm"])
 
         candidates = []
@@ -1510,18 +1707,25 @@ class ImageSketchOperations:
                                float(b_spline["fit_error_mm"]),
                                "periodic_bspline", b_complexity))
         if not candidates:
-            raise ValueError(
+            raise CurveFitError(
                 "No curve representation satisfied both geometric accuracy "
-                "and CAD complexity budgets; "
-                f"hybrid={hybrid_complexity}, "
-                f"explicit_splines={explicit_diagnostics}, "
-                f"b_spline={b_spline_diagnostics}")
+                "and CAD complexity budgets", {
+                    "reason": "all_curve_candidates_rejected",
+                    "hybrid_complexity": hybrid_complexity,
+                    "hybrid_fit_error_mm": float(hybrid_error),
+                    "explicit_splines": explicit_diagnostics,
+                    "periodic_bspline": b_spline_diagnostics})
         estimated_commit_sec, _, chosen_entities, chosen_error, chosen_strategy, complexity = min(
             candidates, key=lambda item: (item[0], item[1], item[3]))
         for entity in chosen_entities:
             entity["curve_strategy"] = chosen_strategy
             entity["curve_complexity"] = complexity
             entity["estimated_commit_sec"] = estimated_commit_sec
+            entity["fit_candidate_diagnostics"] = {
+                "chosen": chosen_strategy,
+                "hybrid": explicit_diagnostics,
+                "periodic_bspline": b_spline_diagnostics,
+            }
         return chosen_entities, chosen_error
 
     @staticmethod
@@ -1559,7 +1763,7 @@ class ImageSketchOperations:
                 "fit_error_mm": line["max_error"],
                 "curve_strategy": "open_path_single_entity",
             }], float(line["max_error"])
-        arc = self._circle_fit(dense)
+        arc = self._circle_fit(dense, preserve_endpoints=True)
         if ("arc" in prefer and arc and arc["max_error"] <= max_error and
                 arc["monotonic"] >= 0.97 and
                 math.radians(3) <= arc["sweep"] <= math.radians(330)):
@@ -2581,6 +2785,20 @@ class ImageSketchOperations:
                         projection: Dict[str, Any] = None,
                         require_orthographic: bool = False,
                         idempotency_key: str = None) -> Dict:
+        if (commit or {}).get("mode", "commit_if_confident") not in {
+                "analyze_only", "preview"}:
+            # Direct legacy callers use the same checked commit as public MCP.
+            analysis = self.image_to_sketch(
+                image_path, sketch_name, plane, unit, image_mode,
+                contour_selection, trace, calibration, placement, geometry,
+                approximation, validation,
+                {**(commit or {}), "mode": "analyze_only"},
+                {**(debug or {}), "save_vector_json": True,
+                 "save_reference_raster": True}, models, projection,
+                require_orthographic, None)
+            return self.commit_vector_analysis(
+                analysis, sketch_name, plane, unit, commit, validation,
+                idempotency_key=idempotency_key)
         missing = self._image_dependencies()
         if missing:
             return missing
@@ -2974,6 +3192,13 @@ class ImageSketchOperations:
                         "a tolerance only when the measured deviation is acceptable."])
             return self._result(True, "Image vectorization completed",
                                 SwErrors.swSuccess, data)
+        except CurveFitError as exc:
+            return self._error(
+                "IMAGE_LOW_CONFIDENCE", str(exc),
+                details={"curve_fit": exc.diagnostics},
+                recommended_actions=[
+                    "Inspect curve_fit candidate rejections before changing "
+                    "the entity or control-point budgets."])
         except (NotImplementedError, PermissionError) as exc:
             return self._error(
                 "CAPABILITY_UNAVAILABLE", str(exc),
@@ -3006,10 +3231,6 @@ class ImageSketchOperations:
                                budget: Dict[str, Any] = None,
                                idempotency_key: str = None) -> Dict:
         """Commit a verified offline vector payload without loading ML models."""
-        cached = self._runtime.idempotent_get(idempotency_key)
-        if cached is not None:
-            cached.setdefault("data", {})["idempotent_replay"] = True
-            return cached
         commit = dict(commit or {})
         validation = dict(validation or {})
         data = dict((analysis_result or {}).get("data") or {})
@@ -3042,6 +3263,11 @@ class ImageSketchOperations:
         min_confidence = float(commit.get("min_confidence", 0.9))
         if mode in {"analyze_only", "preview"}:
             return analysis_result
+        if ((payload.get("trace") or {}).get("backend") == "classical" and
+                not commit.get("acknowledge_classical_backend", False)):
+            return self._error(
+                "IMAGE_LOW_CONFIDENCE",
+                "Classical segmentation requires acknowledge_classical_backend=true")
         if mode == "commit_if_confident" and (
                 not passed or confidence < min_confidence):
             return self._error(
@@ -3156,118 +3382,163 @@ class ImageSketchOperations:
                     "mutation_started": False,
                 })
 
-        constraints = self._topology_constraints(loops, output_mode)
-        solve_policy, sketch_validation = self._output_commit_policy(
-            output_mode, max_entities,
-            sum(1 for loop in loops if loop.get("closed", True)),
-            validation.get("require_closed", all(
-                loop.get("closed", True) for loop in loops)))
-        commit_started = time.monotonic()
-        sketch_result = self.create_parametric_sketch(
-            name=sketch_name, plane=plane, unit=unit,
-            entities=cad_entities, constraints=constraints,
-            dimensions=[], equations=[],
-            solve=solve_policy,
-            validation=sketch_validation,
-            transaction={"rollback_on_failure": commit.get(
-                "rollback_on_failure", True)},
-            output_mode=output_mode,
-            idempotency_key=None)
-        committed = bool(sketch_result.get("success"))
-        data.update({"committed": committed, "sketch": sketch_name,
-                     "sketch_result": sketch_result,
-                     "estimated_commit_sec": estimated_commit_sec,
-                     "commit_profile": commit_profile,
-                     "commit_optimization": commit_optimization,
-                     "commit_elapsed_sec": round(
-                         time.monotonic() - commit_started, 3),
-                     "parameterization": self._parameterization_report(
-                         entities, output_mode),
-                     "analysis_process": "isolated_worker",
-                     "commit_process": "solidworks_com"})
-        if (committed and math.isfinite(allowed_commit_sec) and
-                data["commit_elapsed_sec"] > allowed_commit_sec):
-            restored = self._rollback_named_sketch(sketch_name)
-            self._runtime.increment("budget_exceeded")
-            data["committed"] = False
-            return self._error(
-                "BUDGET_EXCEEDED",
-                "SolidWorks sketch creation exceeded the commit budget",
-                document_restored=restored,
-                details={**data, "allowed_commit_sec": allowed_commit_sec,
-                         "mutation_started": True})
-        if committed:
-            validation_deadline = (
-                commit_started + allowed_commit_sec
-                if math.isfinite(allowed_commit_sec) else None)
-            cad_validation = self._validate_committed_geometry(
-                sketch_name, payload, vector_path, validation,
-                deadline_monotonic=validation_deadline)
-            data["cad_validation"] = cad_validation
-            if not cad_validation.get("pass"):
-                restored = False
-                if commit.get("rollback_on_failure", True):
-                    restored = self._rollback_named_sketch(sketch_name)
-                data["committed"] = False
-                if cad_validation.get("budget_exceeded"):
-                    self._runtime.increment("budget_exceeded")
-                    return self._error(
-                        "BUDGET_EXCEEDED",
-                        "Post-COM validation exceeded the remaining budget",
-                        document_restored=restored,
-                        debug_artifacts=[path for path in [
-                            cad_validation.get("overlay"),
-                            cad_validation.get("cad_raster"),
-                            cad_validation.get("reference_raster"),
-                            data.get("overlay"), vector_path] if path],
-                        details={**data,
-                                 "allowed_commit_sec": allowed_commit_sec,
-                                 "mutation_started": True})
-                return self._error(
-                    "IMAGE_LOW_CONFIDENCE",
-                    "Committed SolidWorks geometry failed post-COM reverse-raster validation",
-                    document_restored=restored,
-                    debug_artifacts=[path for path in [
-                        cad_validation.get("overlay"),
-                        cad_validation.get("cad_raster"),
-                        cad_validation.get("reference_raster"),
-                        data.get("overlay"), vector_path] if path],
-                    details=data)
-            data["commit_elapsed_sec"] = round(
-                time.monotonic() - commit_started, 3)
-            if (math.isfinite(allowed_commit_sec) and
+        def commit_native():
+            constraints = self._topology_constraints(loops, output_mode)
+            solve_policy, sketch_validation = self._output_commit_policy(
+                output_mode, max_entities,
+                sum(1 for loop in loops if loop.get("closed", True)),
+                validation.get("require_closed", all(
+                    loop.get("closed", True) for loop in loops)))
+            commit_started = time.monotonic()
+            sketch_result = self.create_parametric_sketch(
+                name=sketch_name, plane=plane, unit=unit,
+                entities=cad_entities, constraints=constraints,
+                dimensions=[], equations=[],
+                solve=solve_policy,
+                validation=sketch_validation,
+                transaction={"rollback_on_failure": commit.get(
+                    "rollback_on_failure", True)},
+                output_mode=output_mode,
+                idempotency_key=None)
+            committed = bool(sketch_result.get("success"))
+            data.update({"committed": committed, "sketch": sketch_name,
+                         "sketch_result": sketch_result,
+                         "estimated_commit_sec": estimated_commit_sec,
+                         "commit_profile": commit_profile,
+                         "commit_optimization": commit_optimization,
+                         "commit_elapsed_sec": round(
+                             time.monotonic() - commit_started, 3),
+                         "parameterization": self._parameterization_report(
+                             entities, output_mode),
+                         "analysis_process": "isolated_worker",
+                         "commit_process": "solidworks_com"})
+            if (committed and math.isfinite(allowed_commit_sec) and
                     data["commit_elapsed_sec"] > allowed_commit_sec):
                 restored = self._rollback_named_sketch(sketch_name)
                 self._runtime.increment("budget_exceeded")
                 data["committed"] = False
                 return self._error(
                     "BUDGET_EXCEEDED",
-                    "Verified SolidWorks commit exceeded the remaining budget",
-                    document_restored=restored,
-                    debug_artifacts=[path for path in [
-                        cad_validation.get("overlay"),
-                        cad_validation.get("cad_raster"), vector_path] if path],
+                    "SolidWorks sketch creation exceeded the commit budget",
+                    document_restored=False,
                     details={**data, "allowed_commit_sec": allowed_commit_sec,
                              "mutation_started": True})
-            self._runtime.calibrations[sketch_name] = {
-                "pixel_to_sketch": payload.get("pixel_to_sketch"),
-                "image_path": payload.get("source"),
-                "mask_shape": payload.get("image_shape"),
-                "scale_mm_per_px": payload.get("scale_mm_per_px"),
-            }
-            result = self._result(
-                True, "Image vectorization analyzed offline and committed",
-                SwErrors.swSuccess, data)
-            self._runtime.idempotent_put(idempotency_key, result)
+            if committed:
+                validation_deadline = (
+                    commit_started + allowed_commit_sec
+                    if math.isfinite(allowed_commit_sec) else None)
+                cad_validation = self._validate_committed_geometry(
+                    sketch_name, payload, vector_path, validation,
+                    deadline_monotonic=validation_deadline)
+                data["cad_validation"] = cad_validation
+                if not cad_validation.get("pass"):
+                    restored = False
+                    if commit.get("rollback_on_failure", True):
+                        restored = self._rollback_named_sketch(sketch_name)
+                    data["committed"] = False
+                    if cad_validation.get("budget_exceeded"):
+                        self._runtime.increment("budget_exceeded")
+                        return self._error(
+                            "BUDGET_EXCEEDED",
+                            "Post-COM validation exceeded the remaining budget",
+                            document_restored=False,
+                            debug_artifacts=[path for path in [
+                                cad_validation.get("overlay"),
+                                cad_validation.get("cad_raster"),
+                                cad_validation.get("reference_raster"),
+                                data.get("overlay"), vector_path] if path],
+                            details={**data,
+                                     "allowed_commit_sec": allowed_commit_sec,
+                                     "mutation_started": True})
+                    return self._error(
+                        "IMAGE_LOW_CONFIDENCE",
+                        "Committed SolidWorks geometry failed post-COM reverse-raster validation",
+                        document_restored=False,
+                        debug_artifacts=[path for path in [
+                            cad_validation.get("overlay"),
+                            cad_validation.get("cad_raster"),
+                            cad_validation.get("reference_raster"),
+                            data.get("overlay"), vector_path] if path],
+                        details=data)
+                data["commit_elapsed_sec"] = round(
+                    time.monotonic() - commit_started, 3)
+                if (math.isfinite(allowed_commit_sec) and
+                        data["commit_elapsed_sec"] > allowed_commit_sec):
+                    restored = self._rollback_named_sketch(sketch_name)
+                    self._runtime.increment("budget_exceeded")
+                    data["committed"] = False
+                    return self._error(
+                        "BUDGET_EXCEEDED",
+                        "Verified SolidWorks commit exceeded the remaining budget",
+                        document_restored=False,
+                        debug_artifacts=[path for path in [
+                            cad_validation.get("overlay"),
+                            cad_validation.get("cad_raster"), vector_path] if path],
+                        details={**data, "allowed_commit_sec": allowed_commit_sec,
+                                 "mutation_started": True})
+                self._runtime.calibrations[sketch_name] = {
+                    "pixel_to_sketch": payload.get("pixel_to_sketch"),
+                    "image_path": payload.get("source"),
+                    "mask_shape": payload.get("image_shape"),
+                    "scale_mm_per_px": payload.get("scale_mm_per_px"),
+                }
+                result = self._result(
+                    True, "Image vectorization analyzed offline and committed",
+                    SwErrors.swSuccess, data)
+                return result
+            return self._error(
+                ((sketch_result.get("data") or {}).get("error") or {}).get(
+                    "code", "SKETCH_COMMIT_FAILED"),
+                "Offline vector candidate could not be committed to SolidWorks",
+                document_restored=self._commit_document_restored(sketch_result),
+                debug_artifacts=[path for path in [
+                    data.get("overlay"), data.get("selected_boundary_map"),
+                    vector_path] if path],
+                details=data)
+
+        return self._checkpointed_vector_commit(
+            sketch_name, commit_native, commit.get("rollback_on_failure", True))
+
+    def _checkpointed_vector_commit(self, sketch_name, operation, rollback):
+        """Cover sketch creation and reverse-raster validation with one checkpoint."""
+        if not rollback:
+            return operation()
+        doc, error = self.get_active_doc()
+        if error:
+            return error
+        path = self._get_doc_path(doc)
+        if (not path or not os.path.isfile(path) or
+                com_get(doc, "GetSaveFlag", default=None) is not False):
+            return self._error(
+                "CHECKPOINT_REQUIRES_SAVED_DOCUMENT",
+                "Save the document before a raster commit with native rollback",
+                document_restored=False, details={"mutation_started": False})
+        before = self._transaction_snapshot(doc)
+        checkpoint = self._create_checkpoint(
+            doc, "Vector_" + sketch_name, {}, before)
+        if not checkpoint.get("success") or not checkpoint.get("path"):
+            return self._error(
+                "CHECKPOINT_FAILED", "Cannot checkpoint the raster commit",
+                document_restored=False,
+                details={"mutation_started": False, "checkpoint": checkpoint})
+        try:
+            result = operation()
+        except Exception as exc:
+            result = self._error("SKETCH_COMMIT_FAILED", str(exc),
+                                 document_restored=False)
+        if result.get("success"):
+            result.setdefault("data", {})["checkpoint"] = checkpoint
             return result
-        return self._error(
-            "IMAGE_LOW_CONFIDENCE",
-            "Offline vector analysis passed, but SolidWorks sketch commit failed",
-            document_restored=self._commit_document_restored(sketch_result),
-            debug_artifacts=[path for path in [
-                data.get("overlay"), data.get("selected_boundary_map"),
-                vector_path] if path],
-            details=data)
+        restored = self._rollback_transaction(doc, before, checkpoint["path"])
+        # Closing a document invalidates all cached COM proxies for its sketches.
+        with self._runtime._lock:
+            self._runtime.entities = {
+                key: value for key, value in self._runtime.entities.items()
+                if key[0] != path}
+        result.setdefault("data", {})["rollback"] = restored
+        result["data"].setdefault("error", {})["document_restored"] = bool(
+            restored.get("document_restored"))
+        return result
 
     def _reference_mask(self, image_path, contour_selection, image_mode):
         rgb, alpha = self._load_image(image_path)

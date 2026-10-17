@@ -162,7 +162,8 @@ def _load_models():
             models[name] = torch.jit.load(
                 str(_model_directory() / spec["filename"]),
                 map_location="cuda").eval()
-        _MODEL_BUNDLE = {"torch": torch, "models": models}
+        _MODEL_BUNDLE = {
+            "torch": torch, "models": models, "capability": report}
         return _MODEL_BUNDLE
 
 
@@ -229,25 +230,87 @@ def _model_consensus(rgb_bgr, trace, bundle):
     teed_band = (teed_probability >= teed_threshold) & roi
     dexi_skeleton = skeletonize(dexi_band)
     teed_skeleton = skeletonize(teed_band)
-    distance_to_dexi = ndimage.distance_transform_edt(~dexi_skeleton)
-    distance_to_teed = ndimage.distance_transform_edt(~teed_skeleton)
-    dexi_support = float((distance_to_teed[dexi_skeleton] <= radius).mean())
-    teed_support = float((distance_to_dexi[teed_skeleton] <= radius).mean())
-    confirmed_band = dexi_band & (ndimage.distance_transform_edt(~teed_band) <= radius)
+    distance_to_dexi_centerline = ndimage.distance_transform_edt(~dexi_skeleton)
+    distance_to_teed_centerline = ndimage.distance_transform_edt(~teed_skeleton)
+    distance_to_dexi_band = ndimage.distance_transform_edt(~dexi_band)
+    distance_to_teed_band = ndimage.distance_transform_edt(~teed_band)
+
+    def support(distance, pixels):
+        values = distance[pixels]
+        return float((values <= radius).mean()) if values.size else 0.0
+
+    # The acceptance metric measures whether each independently inferred
+    # centerline is supported by the other model's probability band.  Comparing
+    # centerline-to-centerline penalizes legitimate thick strokes whose ridge
+    # locations differ even though the two verified models overlap spatially.
+    dexi_support = support(distance_to_teed_band, dexi_skeleton)
+    teed_support = support(distance_to_dexi_band, teed_skeleton)
+    centerline_dexi_support = support(
+        distance_to_teed_centerline, dexi_skeleton)
+    centerline_teed_support = support(
+        distance_to_dexi_centerline, teed_skeleton)
+    confirmed_band = (
+        (dexi_band & (distance_to_teed_band <= radius)) |
+        (teed_band & (distance_to_dexi_band <= radius)))
     consensus = skeletonize(confirmed_band)
     if not consensus.any():
         raise RuntimeError("DexiNed and TEED found no mutually supported edges")
-    distances = np.concatenate([
-        distance_to_teed[dexi_skeleton], distance_to_dexi[teed_skeleton]])
+    spatial_distances = np.concatenate([
+        distance_to_teed_band[dexi_skeleton],
+        distance_to_dexi_band[teed_skeleton]])
+    centerline_distances = np.concatenate([
+        distance_to_teed_centerline[dexi_skeleton],
+        distance_to_dexi_centerline[teed_skeleton]])
+    capability = bundle.get("capability") or {}
+    model_files = capability.get("models") or {}
     return consensus, {
+        "consensus_method": "mutual_probability_band_support",
         "dexined_threshold": dexi_threshold,
         "teed_threshold": teed_threshold,
         "consensus_radius_px": radius,
         "dexined_support": dexi_support,
         "teed_support": teed_support,
         "balanced_support": min(dexi_support, teed_support),
-        "distance_median_px": float(np.median(distances)),
-        "distance_p95_px": float(np.percentile(distances, 95)),
+        "distance_median_px": float(np.median(spatial_distances)),
+        "distance_p95_px": float(np.percentile(spatial_distances, 95)),
+        "centerline_dexined_support": centerline_dexi_support,
+        "centerline_teed_support": centerline_teed_support,
+        "centerline_distance_median_px": float(np.median(centerline_distances)),
+        "centerline_distance_p95_px": float(np.percentile(
+            centerline_distances, 95)),
+        "dexined_probability": {
+            "min": float(dexi_probability[roi].min()),
+            "max": float(dexi_probability[roi].max()),
+            "mean": float(dexi_probability[roi].mean()),
+        },
+        "teed_probability": {
+            "min": float(teed_probability[roi].min()),
+            "max": float(teed_probability[roi].max()),
+            "mean": float(teed_probability[roi].mean()),
+        },
+        "band_pixels": {
+            "dexined": int(dexi_band.sum()),
+            "teed": int(teed_band.sum()),
+            "mutually_supported": int(confirmed_band.sum()),
+        },
+        "centerline_pixels": {
+            "dexined": int(dexi_skeleton.sum()),
+            "teed": int(teed_skeleton.sum()),
+        },
+        "both_verified_checkpoints_loaded": bool(
+            len(bundle.get("models") or {}) == len(MODEL_SPECS) and
+            all((model_files.get(name) or {}).get("sha256_verified", False)
+                for name in MODEL_SPECS)),
+        "checkpoints": {
+            name: {
+                "filename": spec["filename"],
+                "expected_sha256": spec["sha256"],
+                "sha256_verified": bool(
+                    (model_files.get(name) or {}).get(
+                        "sha256_verified", False)),
+            }
+            for name, spec in MODEL_SPECS.items()
+        },
         "edge_pixels": int(consensus.sum()),
     }
 

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -20,12 +21,12 @@ import pythoncom
 import win32com.client
 
 from ..constants import SwErrors, SwSaveAsOptions
+from .. import __version__ as MCP_VERSION
 from .com_utils import (com_get, detect_modal_dialog, get_typed_module,
                         out_i4, null_dispatch)
 from .runtime import atomic_json_write, default_state_dir
 
 
-MCP_VERSION = "6.5.31"
 MAX_PLAN_OPERATIONS = 100
 
 
@@ -174,10 +175,20 @@ class TransactionOperations:
         if not path:
             safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", transaction_name)
             path = str(default_state_dir() / "checkpoints" /
-                       f"{int(time.time() * 1000)}_{safe_name}.SLDPRT")
-        saved = self._save_copy(doc, path)
+                       f"{uuid.uuid4().hex}_{safe_name}.SLDPRT")
+        source_path = snapshot.get('path')
+        if os.path.exists(path):
+            return {'success':False,'path':path,'error':'Checkpoint path already exists'}
+        if source_path and os.path.isfile(source_path) and not bool(com_get(doc,'GetSaveFlag')):
+            Path(path).parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(source_path,path)
+            saved = {'success':True,'path':str(Path(path).resolve()),
+                     'size_bytes':os.path.getsize(path),'method':'saved_native_bytes'}
+        else:
+            saved = self._save_copy(doc, path)
         if not saved["success"]:
             return saved
+        saved['sha256'] = self._sha256(saved['path'])
         try:
             sw_version = str(com_get(self._sw_app, "RevisionNumber",
                                      default="unknown"))
@@ -200,8 +211,23 @@ class TransactionOperations:
         keep_last = max(1, int(checkpoint.get(
             "keep_last_n", getattr(self._config, "keep_last_n_checkpoints", 10))))
         directory = Path(saved["path"]).parent
-        checkpoints = sorted(directory.glob("*.SLDPRT"),
-                             key=lambda item: item.stat().st_mtime,
+        # Retention owns only explicit checkpoint manifests. Never delete
+        # arbitrary CAD files merely because the user selected their directory.
+        owned = []
+        for candidate in directory.glob('*.SLDPRT'):
+            try:
+                metadata=json.loads(Path(str(candidate)+'.manifest.json').read_text(encoding='utf-8'))
+                if (metadata.get('schema') == 'solidworks-mcp/checkpoint/v1' and
+                        Path(metadata['checkpoint']['path']).resolve() == candidate.resolve() and
+                        candidate.resolve() != Path(source_path or '').resolve()):
+                    owned.append(candidate)
+            except (OSError,ValueError,KeyError):
+                pass
+        # The checkpoint just written is always the newest: file times alone tie when two
+        # checkpoints are made within one clock tick, and the tie could delete the wrong one.
+        current = Path(saved["path"]).resolve()
+        checkpoints = sorted(owned,
+                             key=lambda item: (item.resolve() == current, item.stat().st_mtime_ns),
                              reverse=True)
         removed = []
         for old in checkpoints[keep_last:]:
@@ -244,36 +270,40 @@ class TransactionOperations:
                 left["solid_body_count"] == right["solid_body_count"])
 
     def _rollback_transaction(self, doc, before, checkpoint_path):
-        after = self._transaction_snapshot(doc)
-        deleted, failed = self._delete_created_features(doc, before, after)
+        restored=False
+        current=None
+        error=None
         try:
-            started = time.perf_counter()
-            com_get(doc, "EditRebuild3", default=False)
-            self.record_rebuild(time.perf_counter() - started)
-        except Exception:
-            pass
-        current = self._transaction_snapshot(doc)
-        restored = self._snapshots_equivalent(before, current)
-        fallback = False
-        fallback_error = None
-        if not restored and checkpoint_path and os.path.exists(checkpoint_path):
-            fallback = True
-            title = self._get_doc_title(doc)
-            try:
-                self._sw_app.CloseDoc(title)
-                opened = self.open_document(checkpoint_path)
-                if opened.get("success"):
-                    restored_doc, err = self.get_active_doc()
-                    if err is None:
-                        current = self._transaction_snapshot(restored_doc)
-                        restored = self._snapshots_equivalent(before, current)
-            except Exception as exc:
-                fallback_error = str(exc)
-        self._runtime.increment("rollbacks")
-        return {"rolled_back": bool(restored), "document_restored": restored,
-                "deleted_features": deleted, "delete_failures": failed,
-                "checkpoint_reopened": fallback,
-                "fallback_error": fallback_error, "current": current}
+            if not checkpoint_path or not before.get('path'):
+                raise RuntimeError('No saved native checkpoint is available; restoration is unproven')
+            source=Path(before['path']).resolve()
+            checkpoint=Path(checkpoint_path).resolve()
+            metadata=json.loads(Path(str(checkpoint)+'.manifest.json').read_text(encoding='utf-8'))
+            if (metadata.get('schema') != 'solidworks-mcp/checkpoint/v1' or
+                    Path(metadata['source']['path']).resolve() != source or
+                    Path(metadata['checkpoint']['path']).resolve() != checkpoint or
+                    checkpoint == source or
+                    self._sha256(checkpoint) != metadata['checkpoint'].get('sha256') or
+                    self._sha256(checkpoint) != metadata['source'].get('sha256')):
+                raise RuntimeError('Checkpoint identity or saved native bytes did not verify')
+            active=self._sw_app.ActiveDoc
+            if active is None or Path(self._get_doc_path(active)).resolve() != source:
+                raise RuntimeError('Active document changed; automatic rollback will not touch another document')
+            self._sw_app.CloseDoc(self._get_doc_title(doc))
+            shutil.copyfile(checkpoint,source)
+            opened=self.open_document(str(source))
+            active=self._sw_app.ActiveDoc
+            restored=bool(opened.get('success') and active is not None and
+                          Path(self._get_doc_path(active)).resolve() == source and
+                          self._sha256(source) == metadata['source']['sha256'])
+            if restored:
+                current=self._transaction_snapshot(active)
+        except Exception as exc:
+            error=str(exc)
+        self._runtime.increment('rollbacks')
+        return {'rolled_back':restored,'document_restored':restored,
+                'method':'verified_native_file_restore','checkpoint_reopened':restored,
+                'fallback_error':error,'current':current}
 
     def _call_operation(self, name: str, args: Dict[str, Any]) -> Dict:
         if name not in self.PLAN_OPERATIONS:
@@ -281,7 +311,7 @@ class TransactionOperations:
                 "INVALID_PLAN", f"Operation '{name}' is not whitelisted",
                 recommended_actions=[
                     "Use a supported native CAD operation; arbitrary logic "
-                    "belongs in execute_python_async outside a CAD plan."])
+                    "belongs in execute_python outside a CAD plan."])
         args = dict(args or {})
         for common in ("budget", "idempotency_key", "allow_unsaved_document",
                        "save_path", "ui_guard"):
@@ -389,10 +419,6 @@ class TransactionOperations:
                         budget: Dict[str, Any] = None,
                         allow_unsaved_document: bool = False,
                         save_path: str = None) -> Dict:
-        cached = self._runtime.idempotent_get(idempotency_key)
-        if cached is not None:
-            cached.setdefault("data", {})["idempotent_replay"] = True
-            return cached
         if not name:
             return self._error("INVALID_PLAN", "Transaction name is required")
         if not isinstance(operations, list) or len(operations) > MAX_PLAN_OPERATIONS:
@@ -419,6 +445,9 @@ class TransactionOperations:
             save_before_result = self.save_document()
             if not save_before_result.get("success"):
                 return save_before_result
+        if on_failure == 'rollback' and bool(com_get(doc, 'GetSaveFlag')):
+            return self._error('DOCUMENT_DIRTY',
+                'Save manual changes before a transaction that promises native file rollback')
         logger.info("Transaction name=%s stage=snapshot_before begin", name)
         before = self._transaction_snapshot(doc)
         logger.info(
@@ -461,6 +490,10 @@ class TransactionOperations:
                         "BUDGET_EXCEEDED", "Transaction elapsed-time budget exceeded",
                         details={"step": index})
                     break
+                active=self._sw_app.ActiveDoc
+                if (active is None or self._get_doc_path(active) != before.get('path')):
+                    failure=self._error('DOCUMENT_MISMATCH', 'Active document changed during transaction')
+                    break
                 if not isinstance(operation, dict) or "op" not in operation:
                     failure = self._error("INVALID_PLAN",
                                           f"Invalid operation at index {index}")
@@ -484,6 +517,10 @@ class TransactionOperations:
                 step.setdefault("data", {})["step_index"] = index
                 step["data"]["operation"] = operation["op"]
                 steps.append(step)
+                active=self._sw_app.ActiveDoc
+                if (active is None or self._get_doc_path(active) != before.get('path')):
+                    failure=self._error('DOCUMENT_MISMATCH', 'Active document changed during transaction')
+                    break
                 if not step.get("success") and not operation.get(
                         "continue_on_failure", False):
                     failure = step
@@ -519,6 +556,12 @@ class TransactionOperations:
             save_result = None
             if save_policy.get("save_after_success", True):
                 save_result = self.save_document()
+                if not save_result.get("success"):
+                    return self._error('TRANSACTION_SAVE_FAILED',
+                        'Geometry was executed but the native save failed',
+                        details={'transaction_id':tx_id, 'committed':False,
+                                 'geometry_changed':True, 'save_result':save_result,
+                                 'checkpoint':checkpoint_result, 'steps':steps})
                 if save_result.get("success"):
                     self._runtime.increment("files_saved")
                     if after["solid_body_count"]:
@@ -531,7 +574,6 @@ class TransactionOperations:
                  "steps": steps, "invariants": "passed",
                  "save_result": save_result,
                  "elapsed_ms": round((time.monotonic() - started) * 1000, 3)})
-            self._runtime.idempotent_put(idempotency_key, result)
             logger.info("Transaction id=%s name=%s stage=committed", tx_id, name)
             return result
         except Exception as exc:
@@ -621,7 +663,34 @@ class TransactionOperations:
             "typed_interfaces": get_typed_module() is not None,
             "operations": sorted(self.PLAN_OPERATIONS | {
                 "run_transaction", "execute_cad_plan", "analyze_sketch_dof",
-                "get_session_metrics", "get_capabilities", "sync_model_graph"}),
+                "get_session_metrics", "get_capabilities", "sync_model_graph",
+                "get_model_context", "model_api_lookup", "execute_model_code",
+                "observe_model", "measure_reference", "inspect_model", "export_model"}),
+            "shape_program": {
+                "version": 3, "modes": ["analyze", "create", "edit"],
+                "constructors": ["sectioned_solid", "tube", "variable_tube", "dome", "revolve",
+                                 "ellipsoid", "rounded_prism", "combine", "mirror", "surface_patch", "frame", "place", "anchored_extrude"],
+                "anchors": ["surface_point_declared_family", "path_point", "path_tangent", "face_anchor_native_ray_intersection"],
+                "surface_patch": "native_offset_thicken_clipped_by_explicit_mask; host preserved",
+                "boolean_operations": ["union", "difference", "intersection"],
+                "body_pairs": "native minimum distance and temporary intersection; tri-state acceptance",
+                "ellipsoid_aspect": "exact_constant_ratio_or_explicit_guided_approximation",
+                "coordinate_system": {"unit": "mm", "up": "Y", "width": "X", "depth": "Z"},
+                "native_parameter_bindings": True, "in_place_edit": True,
+                "edit_scope": "dependency_reconcile", "embedded_native_record": True,
+                "parameter_growth": True, "legacy_v2_edit_scope": "same_topology",
+                "native_curve_conditioning": "15_significant_digit_constants; polynomial_Horner; one_exact_path_reversal_on_native_warning; retained_for_edits",
+                "inline_images": True,
+                "observation": "document_revision_guard; scoped_components; shared_native_scale; camera_restore; native_mass_and_surfaces; optional_body_scoped_radial_sections; restoring_command_scope",
+                "reference_measurements": "COM_free_targeted_raster_extents; optional; no_CAD_entities",
+                "tool_surface": "compact_12_default; expert_tools_gateway; optional_expert_profile",
+                "inspection": "revision_bound_native_facts; optional_exact_extrema_and_Check3; no_CAD_entities",
+                "delivery": "new_directory_native_STEP_per_body_STL; saved_source_preserved; kernel_units_topology_volume_checks",
+                "delivery_unverified": ["likeness", "native_parameter_cycle", "manufacturing_clearances",
+                                        "wall_thickness", "mesh_self_intersections", "unity_rig"],
+                "raw_python_ui_watchdog": "isolated_UI_only_monitor; shared_STA; active_com_get_cause; scoped_dimension_modify_only",
+                "execution": "serial_STA_owner; all_CAD_calls_leased; caller_deadline_not_COM_cancel; durable_quarantine; explicit_reconciliation; durable_document_revision_payload_receipts",
+            },
             "geometry_backend": {"shapely": modules["shapely"],
                                  "scipy": modules["scipy"]},
             "image_backend": modules,
@@ -636,6 +705,8 @@ class TransactionOperations:
                 "post_com_reverse_raster_required": True,
                 "default_max_control_points_per_spline": 64,
                 "cad_cost_model": "batched_composite_nurbs_with_bounded_readback",
+                "closed_silhouette_fallback": "curvature_split_bounded_nurbs",
+                "lineart_consensus": "mutual_probability_band_support",
             },
             "body_silhouette_comparison": {
                 "default_candidate_source": "native_mesh",
@@ -644,6 +715,27 @@ class TransactionOperations:
                 "native_mesh_projection": "selected_body_stl_triangle_union",
                 "viewport_role": "independent_visual_evidence",
                 "requires_explicit_metric_transform": True,
+                "native_capture_boundary": "leased_isolated_client; killed_client_quarantines_native_session",
+                "cancellation_propagated": True,
+                "diagnostic_suffix": ".body-comparison-diagnostic.json",
+            },
+            "scoped_cut_bbox": {
+                "affected_region": "newly_affected_region_bbox",
+                "connected_faces": "connected_result_face_bbox",
+                "expected_bbox_prefers_affected_region": True,
+            },
+            "export_bundle_progress": {
+                "stage_events": True,
+                "comparable_four_body_budget_sec": 360,
+            },
+            "request_idempotency": {
+                "boundary": "public_MCP_mutations_for_saved_parts",
+                "shape_default": "automatic_deterministic_key",
+                "legacy": "explicit_key_or_plan_id_requires_document_path_and_expected_revision",
+                "storage": "LOCALAPPDATA/SolidworksMCP/request-receipts.sqlite3",
+                "replay": "historical_result_only_if_saved_native_state_matches; no_old_images",
+                "unknown": "never_automatically_reexecuted",
+                "lookup": "get_request_status_COM_free",
             },
             "max_plan_operations": MAX_PLAN_OPERATIONS,
             "export_formats": ["sldprt", "step", "stp", "stl", "iges",

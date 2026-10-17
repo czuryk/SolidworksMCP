@@ -1,0 +1,187 @@
+{
+  "schema": "solidworks-mcp/model-delivery/v1",
+  "mcp_version": "6.29.5",
+  "source": {
+    "path": "C:\\Users\\sevbo\\Documents\\Codex\\2026-10-11\\new-chat\\work\\Eiffel_Tower_150mm.SLDPRT",
+    "sha256": "eb6e6deeb16a39f3735b9b799ea448e79eff8fc4cfda1c43ef4cd7481627cbe0",
+    "revision": "48e0512862f0f1e5b5e562e420a9ae3da4314011f23a66f2262fbf8d5bbaaff3",
+    "configuration": "Default"
+  },
+  "unit": "mm",
+  "files": [
+    {
+      "path": "model.SLDPRT",
+      "kind": "sldprt",
+      "sha256": "eb6e6deeb16a39f3735b9b799ea448e79eff8fc4cfda1c43ef4cd7481627cbe0",
+      "size_bytes": 12496350,
+      "inspection": {
+        "container": "SOLIDWORKS_NATIVE",
+        "signature_hex": "F050B91100000004",
+        "native_record_offset": 18,
+        "size_bytes": 12496350
+      }
+    },
+    {
+      "path": "model.step",
+      "kind": "step",
+      "sha256": "8b64203c84a43366a6267ee2c3ccc45f72428efbbf2c1e8194d8536ae70237fa",
+      "size_bytes": 12505743,
+      "inspection": {
+        "format": "ISO-10303-21",
+        "entity_records": 117743,
+        "solid_body_count": 1,
+        "closed_shell_count": 1,
+        "size_bytes": 12505743,
+        "unit": "mm"
+      }
+    },
+    {
+      "path": "stl/EiffelTower150mm.stl",
+      "kind": "stl",
+      "sha256": "4686f45b17ca36b4637c2da35de636b96aba97c4655ea6012db14021b14c83f8",
+      "size_bytes": 9307684,
+      "inspection": {
+        "passed": true,
+        "triangles": 186152,
+        "vertices": 92176,
+        "adjacency_tolerance_mm": 2.9999999999999997e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 9646.670542475611,
+        "native_volume_mm3": 9660.556,
+        "relative_volume_error": 0.001437335234575473,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 3.814697819848334e-07,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "EiffelTower150mm",
+      "tessellation": {
+        "facet_count": 186152,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 165616,
+        "unique_normal_reads": 165616,
+        "unique_fin_reads": 558456,
+        "elapsed_sec": 185.0966,
+        "command_in_progress": true
+      }
+    }
+  ],
+  "native_inspection": {
+    "document_path": "C:/Users/sevbo/Documents/Codex/2026-10-11/new-chat/work/Eiffel_Tower_150mm.SLDPRT",
+    "revision": "48e0512862f0f1e5b5e562e420a9ae3da4314011f23a66f2262fbf8d5bbaaff3",
+    "configuration": "Default",
+    "unit": "mm",
+    "bodies": [
+      {
+        "name": "EiffelTower150mm",
+        "visible": true,
+        "face_count": 1292,
+        "bbox": {
+          "min": [
+            -28.400000000000055,
+            0.0,
+            -28.40000000000005
+          ],
+          "max": [
+            28.400000000000052,
+            150.0,
+            28.400000000000052
+          ]
+        },
+        "volume": 9660.556,
+        "volume_exact": 9660.556036969254,
+        "surface_area": 18262.1189,
+        "center_of_mass": [
+          0.0,
+          40.5089,
+          -0.0001
+        ],
+        "dimensions_mm": [
+          56.80000000000011,
+          150.0,
+          56.8000000000001
+        ],
+        "components": [
+          {
+            "name": "EiffelTower150mm",
+            "id": "fa4461282d25449e9d99f43d9062f14f:EiffelTower150mm",
+            "declared_recipe": "combine",
+            "native_feature_type": "CombineBodies"
+          }
+        ],
+        "surface_types": {
+          "status": "SKIPPED_FACE_BUDGET",
+          "limit": 128
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      }
+    ],
+    "bbox": {
+      "min": [
+        -28.400000000000055,
+        0.0,
+        -28.40000000000005
+      ],
+      "max": [
+        28.400000000000052,
+        150.0,
+        28.400000000000052
+      ]
+    },
+    "bbox_method": "IBody2.GetExtremePoint",
+    "parameters": {
+      "Height": 150.0,
+      "BraceDiameter": 1.3,
+      "MainRailDiameter": 1.8
+    },
+    "sections": [],
+    "body_pairs": [],
+    "acceptance": "MEASURED_NOT_DELIVERY_VALIDATED",
+    "cad_entities_created": 0
+  },
+  "stl_settings": {
+    "backend": "solidworks_itessellation",
+    "unit": "mm",
+    "meters_to_unit": 1000.0,
+    "quality": "custom",
+    "binary": true,
+    "preserve_origin": true,
+    "deviation_mm": 0.02,
+    "angle_tolerance_deg": 10.0,
+    "max_triangles": 1000000,
+    "improved_quality": true,
+    "preferences_mutated": false,
+    "modal_preview_disabled": true
+  },
+  "mesh_cleanup": "bounded",
+  "acceptance": {
+    "status": "EXPORT_VALIDATED",
+    "native_kernel": "PASS",
+    "mesh_structure": "PASS",
+    "shape_likeness": "NOT_CHECKED",
+    "native_parameter_cycle": "NOT_CHECKED",
+    "manufacturing_clearances": "NOT_CHECKED",
+    "wall_thickness": "NOT_CHECKED",
+    "mesh_self_intersections": "NOT_CHECKED",
+    "unity_rig": "NOT_CHECKED"
+  },
+  "native_copy": "identical_saved_bytes",
+  "commit_method": "new_directory_rename"
+}

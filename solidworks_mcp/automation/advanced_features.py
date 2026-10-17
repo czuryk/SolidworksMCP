@@ -33,7 +33,7 @@ from ..constants import (SwErrors, SwEndConditions, SwStartConditions,
                          SwFeatureMarks, SwSelectTypeCode)
 from .com_utils import (com_get, feature_face_count, select_by_id2,
                         select_by_ray, create_select_data, typed,
-                        detect_modal_dialog)
+                        detect_modal_dialog, transform_point)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,18 @@ class AdvancedFeatureOperations:
 
     def _find_feature(self, doc, name: str):
         """Find a feature (or subfeature) by exact name."""
+        # Repeated full-tree scans make a batch of feature lookups quadratic
+        # in cross-process COM calls. Native documents provide a name index.
+        try:
+            interface={1:'IPartDoc',2:'IAssemblyDoc',3:'IDrawingDoc'}.get(
+                com_get(doc,'GetType'))
+            if interface:
+                feature=typed(doc,interface).FeatureByName(name)
+                if feature is None: return None
+                if com_get(feature,'Name',default='')==name: return feature
+        except Exception:
+            # Preserve compatibility with alternate document wrappers.
+            pass
         for feat in self._walk_features(doc):
             if com_get(feat, "Name", default="") == name:
                 return feat
@@ -143,6 +155,85 @@ class AdvancedFeatureOperations:
         return {"min": [round(conv(v, unit), 4) for v in mm[0]],
                 "max": [round(conv(v, unit), 4) for v in mm[1]]}
 
+    def _sketch_profile_region_m(self, doc, sketch_name):
+        """Return profile bbox and plane normal in model coordinates."""
+        feature = self._find_feature(doc, sketch_name)
+        sketch = com_get(feature, "GetSpecificFeature2", default=None)
+        model_to_sketch = com_get(
+            sketch, "ModelToSketchTransform", default=None)
+        sketch_to_model = com_get(
+            model_to_sketch, "Inverse", default=None) if model_to_sketch else None
+        transform = com_get(
+            sketch_to_model, "ArrayData", default=None) if sketch_to_model else None
+        if sketch is None or not transform:
+            return None
+
+        def coordinates(point):
+            return tuple(float(com_get(point, axis, default=0.0))
+                         for axis in ("X", "Y", "Z"))
+
+        local_points = []
+        for point in (com_get(sketch, "GetSketchPoints2", default=[]) or []):
+            try:
+                local_points.append(coordinates(point))
+            except Exception:
+                pass
+        for segment in (com_get(sketch, "GetSketchSegments", default=[]) or []):
+            center = com_get(segment, "GetCenterPoint2", default=None)
+            radius = com_get(segment, "GetRadius", default=None)
+            if center is None or radius is None:
+                continue
+            try:
+                cx, cy, cz = coordinates(center)
+                radius = abs(float(radius))
+                local_points.extend([
+                    (cx - radius, cy, cz), (cx + radius, cy, cz),
+                    (cx, cy - radius, cz), (cx, cy + radius, cz),
+                ])
+            except Exception:
+                pass
+        if not local_points:
+            return None
+        model_points = [transform_point(transform, point)
+                        for point in local_points]
+        origin = transform_point(transform, (0.0, 0.0, 0.0))
+        normal_point = transform_point(transform, (0.0, 0.0, 1.0))
+        normal = [normal_point[index] - origin[index] for index in range(3)]
+        magnitude = sum(value * value for value in normal) ** 0.5
+        if magnitude <= 1e-12:
+            return None
+        normal = [value / magnitude for value in normal]
+        return {
+            "bbox_m": (
+                [min(point[index] for point in model_points)
+                 for index in range(3)],
+                [max(point[index] for point in model_points)
+                 for index in range(3)]),
+            "normal": normal,
+            "source": "selected_sketch_profile",
+        }
+
+    def _scoped_cut_region_bbox(self, profile_region, connected_bbox_m,
+                                unit=None):
+        """Bound a scoped cut by its profile footprint and actual sweep span."""
+        if not profile_region or not connected_bbox_m:
+            return None
+        normal = profile_region["normal"]
+        normal_axis = max(range(3), key=lambda index: abs(normal[index]))
+        if abs(normal[normal_axis]) < 0.98:
+            return None
+        mins = list(profile_region["bbox_m"][0])
+        maxs = list(profile_region["bbox_m"][1])
+        mins[normal_axis] = float(connected_bbox_m[0][normal_axis])
+        maxs[normal_axis] = float(connected_bbox_m[1][normal_axis])
+        conv = self._units.from_meters
+        return {
+            "min": [round(conv(value, unit), 4) for value in mins],
+            "max": [round(conv(value, unit), 4) for value in maxs],
+            "source": "profile_footprint_with_connected_sweep_extent",
+            "normal_axis": "xyz"[normal_axis],
+        }
+
     def _rename_feature_safe(self, doc, feat, requested: str):
         """
         Rename a feature reading back the ACTUAL name. SolidWorks silently
@@ -156,13 +247,16 @@ class AdvancedFeatureOperations:
         if not requested or requested == current:
             return current, None
 
-        existing = set(self._feature_names(doc))
-        existing.discard(current)
+        # The native name index answers this without walking the whole tree: the walk
+        # made every rename linear in the feature count (20 s over an 88-component build).
+        def taken(name):
+            other = self._find_feature(doc, name)
+            return other is not None and com_get(other, "Name", default="") != current
 
         target = requested
-        if target in existing:
+        if taken(target):
             i = 2
-            while f"{requested}_{i}" in existing and i < 1000:
+            while taken(f"{requested}_{i}") and i < 1000:
                 i += 1
             target = f"{requested}_{i}"
 
@@ -509,6 +603,11 @@ class AdvancedFeatureOperations:
             res_data = res.get("data") or {}
             if res_data.get("feature_bbox"):
                 attempt["feature_bbox"] = res_data["feature_bbox"]
+            if res_data.get("newly_affected_region_bbox"):
+                attempt["newly_affected_region_bbox"] = res_data[
+                    "newly_affected_region_bbox"]
+                attempt["expected_bbox_guard_source"] = res_data.get(
+                    "expected_bbox_guard_source")
             if res_data.get("merged_bodies"):
                 attempt["merged_bodies"] = res_data["merged_bodies"]
             attempts.append(attempt)
@@ -566,6 +665,8 @@ class AdvancedFeatureOperations:
         sketch_name, sel_err = self._prepare_profile_selection(doc, sketch_name)
         if sel_err:
             return sel_err
+        profile_region = (self._sketch_profile_region_m(doc, sketch_name)
+                          if is_cut and params.get("scope_bodies") else None)
 
         # End-condition reference face (Mark=1)
         if end_condition in REF_FACE_CONDITIONS:
@@ -869,27 +970,33 @@ class AdvancedFeatureOperations:
         # WHERE did the geometry end up - the single most valuable piece
         # of diagnostics (auto_flags can pick a live-but-wrong side, and
         # flip_start_offset semantics are treacherous).
+        connected_bbox_m = self._feature_bbox_m(feat)
         feature_bbox = self._feature_bbox(feat, unit)
+        newly_affected_region_bbox = self._scoped_cut_region_bbox(
+            profile_region, connected_bbox_m, unit)
+        guard_bbox = newly_affected_region_bbox or feature_bbox
+        guard_bbox_source = ("newly_affected_region_bbox" if
+                             newly_affected_region_bbox else "feature_bbox")
 
         # Guard: expected_bbox - roll back if the feature landed outside
         # the expected zone (user units; optional per-call tolerance).
         expected_bbox = params.get("expected_bbox")
-        if expected_bbox and feature_bbox:
+        if expected_bbox and guard_bbox:
             tol = float(expected_bbox.get("tolerance", 0.5))
             exp_min = expected_bbox.get("min")
             exp_max = expected_bbox.get("max")
             if exp_min and exp_max:
                 outside = []
                 for i, ax in enumerate("xyz"):
-                    if (feature_bbox["min"][i] < float(exp_min[i]) - tol or
-                            feature_bbox["max"][i] > float(exp_max[i]) + tol):
+                    if (guard_bbox["min"][i] < float(exp_min[i]) - tol or
+                            guard_bbox["max"][i] > float(exp_max[i]) + tol):
                         outside.append(ax)
                 if outside:
                     deleted = self._delete_feature_object(doc, feat, feat_name)
                     return self._result(False,
                         f"{op} '{feat_name}' landed OUTSIDE the expected "
                         f"zone (axes: {','.join(outside)}): actual bbox "
-                        f"{feature_bbox['min']}..{feature_bbox['max']}, "
+                        f"{guard_bbox['min']}..{guard_bbox['max']}, "
                         f"expected {exp_min}..{exp_max} (tol {tol}). Feature "
                         f"{'rolled back' if deleted else 'ROLLBACK FAILED'}. "
                         f"Try flipping flip_start_offset/direction_flip or "
@@ -898,6 +1005,9 @@ class AdvancedFeatureOperations:
                         {"feature_name": feat_name,
                          "feature_deleted": deleted,
                          "feature_bbox": feature_bbox,
+                         "connected_result_face_bbox": feature_bbox,
+                         "newly_affected_region_bbox": newly_affected_region_bbox,
+                         "expected_bbox_guard_source": guard_bbox_source,
                          "expected_bbox": expected_bbox,
                          "bbox_unit": unit_str})
 
@@ -968,6 +1078,9 @@ class AdvancedFeatureOperations:
                      "unexpected_merged": unexpected,
                      "expected_merge_bodies": expected_merge,
                      "feature_bbox": feature_bbox, "bbox_unit": unit_str,
+                     "connected_result_face_bbox": feature_bbox,
+                     "newly_affected_region_bbox": newly_affected_region_bbox,
+                     "expected_bbox_guard_source": guard_bbox_source,
                      "scope_feature_rename_rollback_failures":
                          feature_rollback_failures,
                      **merge_data})
@@ -988,6 +1101,9 @@ class AdvancedFeatureOperations:
              "rename_warning": rename_warning,
              "face_count": face_count,
              "feature_bbox": feature_bbox,
+             "connected_result_face_bbox": feature_bbox,
+             "newly_affected_region_bbox": newly_affected_region_bbox,
+             "expected_bbox_guard_source": guard_bbox_source,
              "bbox_unit": unit_str,
              "bodies_before": bodies_before,
              "bodies_after": bodies_after,

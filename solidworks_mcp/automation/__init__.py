@@ -17,6 +17,8 @@ from .transactions import TransactionOperations
 from .parametric import ParametricSketchOperations
 from .vectorization import ImageSketchOperations
 from .high_level import HighLevelOperations
+from .shape_service import ShapeProgramOperations
+from .session_restart import SessionRecoveryOperations
 
 
 # MoreFeatureOperations precedes FeatureOperations so its improved
@@ -24,6 +26,7 @@ from .high_level import HighLevelOperations
 class SolidWorksAutomation(_BaseAutomation, DocumentOperations,
                            TransactionOperations, ParametricSketchOperations,
                            ImageSketchOperations, HighLevelOperations,
+                           ShapeProgramOperations, SessionRecoveryOperations,
                            SketchOperations, MoreFeatureOperations,
                            FeatureOperations, AdvancedFeatureOperations,
                            BodyOperations, GeometryProbeOperations,
@@ -67,4 +70,5 @@ __all__ = [
     "ParametricSketchOperations",
     "ImageSketchOperations",
     "HighLevelOperations",
+    "ShapeProgramOperations",
 ]

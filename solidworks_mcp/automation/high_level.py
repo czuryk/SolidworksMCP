@@ -22,7 +22,7 @@ import pythoncom
 import win32com.client
 
 from ..constants import SwErrors
-from .com_utils import (com_get, create_select_data, feature_face_count,
+from .com_utils import (com_get, command_scope, create_select_data, feature_face_count,
                         resolve_solidworks_constant, select_by_id2, typed)
 from .runtime import atomic_json_write, structured_error
 
@@ -609,12 +609,26 @@ class HighLevelOperations:
             logger.info(
                 "Sweep stage=select profile=%s path=%s profile_type=%s",
                 profile_sketch, path_sketch, profile_type)
-            selected_profile = bool(profile_feature.Select2(False, 1))
-            if not selected_profile:
+            profile_geometry = com_get(profile_feature, 'GetSpecificFeature2')
+            is_spatial = bool(com_get(profile_geometry, 'Is3D', default=False))
+            if is_spatial:
+                contours = list(com_get(profile_geometry, 'GetSketchContours') or [])
+                selected_profile = bool(len(contours) == 1 and
+                    com_get(contours[0], 'IsClosed') and
+                    contours[0].Select2(False, create_select_data(doc, 1)))
+            else:
+                selected_profile = bool(profile_feature.Select2(False, 1))
+            if not selected_profile and not is_spatial:
                 selected_profile = select_by_id2(
                     doc, profile_sketch, "SKETCH", mark=1)
             try:
-                selected_path = bool(path_feature.Select2(True, 4))
+                path_geometry = com_get(path_feature, 'GetSpecificFeature2')
+                if bool(com_get(path_geometry, 'Is3D', default=False)):
+                    paths = list(com_get(path_geometry, 'GetSketchContours') or [])
+                    selected_path = bool(len(paths) == 1 and
+                        paths[0].Select2(True, create_select_data(doc, 4)))
+                else:
+                    selected_path = bool(path_feature.Select2(True, 4))
             except Exception:
                 selected_path = False
             if not selected_path:
@@ -1519,11 +1533,11 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
         }
 
     @staticmethod
-    def _ordered_facet_vertices(tessellation, fin_ids):
+    def _ordered_facet_vertices(tessellation, fin_ids, fin_reader=None):
         edges = []
         for fin_id in list(fin_ids or []):
-            vertices = list(com_get(
-                tessellation, "GetFinVertices", int(fin_id), default=None) or [])
+            vertices = list((fin_reader(int(fin_id)) if fin_reader else com_get(
+                tessellation, "GetFinVertices", int(fin_id), default=None)) or [])
             if len(vertices) != 2:
                 raise RuntimeError(
                     f"Tessellation fin {fin_id} does not have two vertices")
@@ -1540,10 +1554,22 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
 
     def _tessellate_body(self, body, settings):
         """Return oriented triangles from the official IBody2 tessellator."""
+        with command_scope(self._sw_app):
+            return self._read_body_tessellation(body, settings)
+
+    def _read_body_tessellation(self, body, settings):
+        """Read a controlled-quality mesh under the current STA command scope."""
+        from .tessellation_reader import TessellationReader
+        started = time.perf_counter()
+        self._runtime.record_progress('tessellation_prepare', total=None, reset=True)
         body_typed = typed(body, "IBody2")
-        tessellation = body_typed.GetTessellation(pythoncom.Empty)
+        setup_reader = TessellationReader(body_typed, self._runtime)
+        tessellation = setup_reader.call('GetTessellation', pythoncom.Empty)
         if tessellation is None:
             raise RuntimeError("IBody2.GetTessellation returned no object")
+        tessellation = typed(tessellation, "ITessellation")
+        if tessellation is None:
+            raise RuntimeError("Typed ITessellation is unavailable")
         deviation_m = float(settings["deviation_mm"]) * 0.001
         angle_rad = math.radians(float(settings["angle_tolerance_deg"]))
         tessellation.ImprovedQuality = True
@@ -1552,10 +1578,10 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
         tessellation.SurfacePlaneAngleTolerance = angle_rad
         tessellation.CurveChordTolerance = deviation_m
         tessellation.CurveChordAngleTolerance = angle_rad
-        if not bool(com_get(tessellation, "Tessellate", default=False)):
+        reader = TessellationReader(tessellation, self._runtime)
+        if not bool(reader.call('Tessellate')):
             raise RuntimeError("ITessellation.Tessellate returned false")
-        facet_count = int(com_get(
-            tessellation, "GetFacetCount", default=0) or 0)
+        facet_count = int(reader.call('GetFacetCount') or 0)
         if facet_count <= 0:
             raise RuntimeError("SolidWorks tessellation contains no facets")
         if facet_count > int(settings["max_triangles"]):
@@ -1563,14 +1589,31 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
                 f"Tessellation has {facet_count} facets, exceeding "
                 f"max_triangles={settings['max_triangles']}")
 
+        logger.info('Native tessellation facets=%s; reading unique vertex data', facet_count)
+        vertices_cache, normals_cache, fins_cache = {}, {}, {}
+        native_reads = 0
+        def cached(cache, member, index):
+            nonlocal native_reads
+            if index not in cache:
+                cache[index] = reader.call(member, index, array=True)
+                native_reads += 1
+            else:
+                reader.hit(member)
+            return cache[index]
+
         scale = float(settings["meters_to_unit"])
+        read_started = time.perf_counter()
         triangles = []
+        published_at = 0.
         for facet_id in range(facet_count):
-            fin_ids = com_get(
-                tessellation, "GetFacetFins", facet_id, default=None)
-            vertex_ids = self._ordered_facet_vertices(tessellation, fin_ids)
-            points_m = [list(com_get(
-                tessellation, "GetVertexPoint", vertex_id, default=None) or [])
+            if facet_id % 250 == 0 and time.perf_counter() - published_at >= 1.:
+                self._runtime.record_progress('tessellation_read', facet=facet_id,
+                                              total=facet_count, unique_data_reads=native_reads)
+                published_at = time.perf_counter()
+            fin_ids = reader.call('GetFacetFins', facet_id)
+            vertex_ids = self._ordered_facet_vertices(tessellation, fin_ids,
+                lambda index: cached(fins_cache, 'GetFinVertices', index))
+            points_m = [cached(vertices_cache, 'GetVertexPoint', vertex_id)
                 for vertex_id in vertex_ids]
             if any(len(point) != 3 for point in points_m):
                 raise RuntimeError(
@@ -1590,9 +1633,7 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
             normal = tuple(value / magnitude for value in cross)
             vertex_normals = []
             for vertex_id in vertex_ids:
-                raw = list(com_get(
-                    tessellation, "GetVertexNormal", vertex_id,
-                    default=None) or [])
+                raw = cached(normals_cache, 'GetVertexNormal', vertex_id)
                 if len(raw) == 3:
                     vertex_normals.append(tuple(float(value) for value in raw))
             if vertex_normals:
@@ -1604,6 +1645,9 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
                     p1, p2 = p2, p1
                     normal = tuple(-value for value in normal)
             triangles.append((normal, p0, p1, p2))
+
+        self._runtime.record_progress('tessellation_read', completed=facet_count, total=facet_count,
+                                      unit='facets', unique_data_reads=native_reads)
 
         translation = [0.0, 0.0, 0.0]
         if not settings["preserve_origin"]:
@@ -1622,6 +1666,15 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
             "translation": translation,
             "deviation_m": deviation_m,
             "angle_tolerance_rad": angle_rad,
+            "unique_vertex_reads": len(vertices_cache),
+            "unique_normal_reads": len(normals_cache),
+            "unique_fin_reads": len(fins_cache),
+            "reader": reader.snapshot(),
+            "setup_reader": setup_reader.snapshot()['methods'],
+            "elapsed_sec": round(time.perf_counter() - started, 6),
+            "command_in_progress": True,
+            "prepare_sec": round(read_started - started, 6),
+            "read_sec": round(time.perf_counter() - read_started, 6),
         }
 
     @staticmethod
@@ -1659,8 +1712,11 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
         triangles, tessellation = self._tessellate_body(body, settings)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         body_name = str(com_get(body, "Name", default="body"))
+        self._runtime.record_progress('stl_write', total=None, body=body_name)
+        write_started = time.perf_counter()
         self._write_stl(
             path, triangles, bool(settings["binary"]), body_name)
+        tessellation['write_sec'] = round(time.perf_counter() - write_started, 6)
         if not os.path.isfile(path):
             raise RuntimeError("Native tessellation STL writer produced no file")
         return {
@@ -1756,12 +1812,25 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
         statuses = []
         planned_files = []
         active_export = None
+        progress_events = []
+        progress_started = time.monotonic()
+
+        def progress(stage, **details):
+            event = self._runtime.record_progress(
+                stage,
+                elapsed_sec=round(time.monotonic() - progress_started, 3),
+                **details)
+            progress_events.append(event)
+            logger.info("Export bundle stage=%s details=%s", stage, details)
+
         try:
+            progress("preflight_complete", requested_bodies=len(requested))
             rebuild_started = time.perf_counter()
             rebuild_ok = bool(com_get(doc, "EditRebuild3", default=False))
             self.record_rebuild(time.perf_counter() - rebuild_started)
             if not rebuild_ok:
                 raise RuntimeError("SolidWorks rebuild failed before export")
+            progress("rebuild_verified")
             body_objects = {str(com_get(body, "Name", default="?")): body
                             for body in doc.GetBodies2(0, False) or []}
             if not requested:
@@ -1799,7 +1868,9 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
             if invalid_bodies:
                 raise RuntimeError(
                     f"Bodies have no verified faces/bbox: {invalid_bodies}")
+            progress("body_verification_complete", bodies=len(requested))
             active_export = planned_files[0]
+            progress("sldprt_export_started", target=targets[0])
             staged_part = stage_path(targets[0], "model.sldprt")
             part_saved = self._save_copy(doc, staged_part)
             if not part_saved.get("success"):
@@ -1808,7 +1879,9 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
             statuses.append({"kind": "sldprt", "staged": staged_part,
                              "target": targets[0], "verified": True,
                              "inspection": part_inspection})
+            progress("sldprt_export_verified", target=targets[0])
             active_export = planned_files[1]
+            progress("step_export_started", target=targets[1])
             staged_step = stage_path(targets[1], "model.step")
             exported = self.export_file(staged_step)
             if not exported.get("success") or not os.path.isfile(staged_step):
@@ -1824,10 +1897,14 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
             statuses.append({"kind": "step", "staged": staged_step,
                              "target": targets[1], "verified": True,
                              "inspection": step_inspection})
+            progress("step_export_verified", target=targets[1],
+                     solid_body_count=step_inspection["solid_body_count"])
             active_export = {"kind": "stl_settings", "target": None}
             stl_settings = self._resolve_stl_settings(stl, unit)
             for index, body_name in enumerate(requested):
                 active_export = planned_files[index + 2]
+                progress("stl_export_started", body=body_name,
+                         index=index, total=len(requested))
                 staged_stl = stage_path(
                     targets[index + 2], f"body-{index:03d}.stl")
                 export_result = self._export_body_stl(
@@ -1842,21 +1919,28 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
                                  "target": targets[index + 2],
                                  "verified": True,
                                  "inspection": inspection})
+                progress("stl_export_verified", body=body_name,
+                         index=index, total=len(requested),
+                         triangle_count=int(export_result.get(
+                             "triangles", 0)))
             active_export = None
             for item in statuses:
                 item["size_bytes"] = os.path.getsize(item["staged"])
                 item["sha256"] = self._file_hash(item["staged"])
             public_statuses = [{key: value for key, value in item.items()
                                 if key != "staged"} for item in statuses]
+            progress("file_hashes_verified", files=len(statuses))
             manifest = {
                 "schema": "solidworks-mcp/export-bundle/v1",
                 "source_document": source_path,
                 "solidworks_version": str(com_get(
                     self._sw_app, "RevisionNumber", default="unknown")),
-                "mcp_version": "6.5.31", "unit": unit or self._units.default_unit.value,
+                "mcp_version": __import__('solidworks_mcp').__version__,
+                "unit": unit or self._units.default_unit.value,
                 "created_at": time.time(), "files": public_statuses,
                 "bodies": [listed[name] for name in requested],
                 "stl_settings": stl_settings,
+                "progress_events": progress_events,
                 "rebuild_verified": True, "committed": True}
             manifest_path = os.path.join(
                 os.path.dirname(targets[0]), "manifest.json")
@@ -1877,15 +1961,20 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
                     "sha256": self._file_hash(staged_manifest),
                 })
                 manifest["manifest"] = manifest_path
+                progress("manifest_verified", target=manifest_path)
             active_export = {"kind": "atomic_commit", "target": None}
+            progress("atomic_commit_started", files=len(statuses))
             self._commit_export_targets(statuses, overwrite=overwrite)
             active_export = None
+            progress("atomic_commit_complete", files=len(statuses))
             self._runtime.increment("cad_result_files", len(statuses))
             self._runtime.increment("files_saved", len(statuses))
             self._runtime.last_saved_body_at = time.time()
             return self._result(True, "Export bundle committed",
                                 SwErrors.swSuccess, manifest)
         except Exception as exc:
+            progress("failed", error=str(exc),
+                     failed_operation=active_export)
             public_statuses = [{key: value for key, value in item.items()
                                 if key != "staged"} for item in statuses]
             verified_targets = {
@@ -1915,6 +2004,7 @@ print(json.dumps({"coordinates": list(offset.exterior.coords),
                     "file_outcomes": file_outcomes,
                     "failed_operation": active_export,
                     "failure": str(exc),
+                    "progress_events": progress_events,
                     "staging": list(staging_by_parent.values()),
                     "staging_cleaned_in_finally": True,
                 })

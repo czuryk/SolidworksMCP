@@ -255,6 +255,33 @@ class ViewOperations:
             return body_points, "visible_bodies"
         return [], "empty_geometry"
 
+    def _fit_viewport_screen_rect(self, view):
+        """Return the physical viewport rectangle when Transform is screen-based."""
+        try:
+            # IModelView.Transform can publish physical desktop pixels while
+            # IModelView.FrameWidth/FrameHeight still describe a newly tiled
+            # MDI child.  ISldWorks frame coordinates use the same physical
+            # pixel space and remain reliable under per-monitor DPI scaling.
+            left = int(com_get(self._sw_app, "FrameLeft", default=0) or 0)
+            top = int(com_get(self._sw_app, "FrameTop", default=0) or 0)
+            width = int(com_get(self._sw_app, "FrameWidth", default=0) or 0)
+            height = int(com_get(self._sw_app, "FrameHeight", default=0) or 0)
+            if width >= 200 and height >= 120:
+                return [left, top, left + width, top + height]
+            hwnd = self._find_sw_frame_window()
+            rect = self._sw_viewport_screen_rect(hwnd) if hwnd else None
+            if not rect:
+                return None
+            width = int(com_get(view, "FrameWidth", default=0) or 0)
+            height = int(com_get(view, "FrameHeight", default=0) or 0)
+            rect_width = int(rect[2] - rect[0])
+            rect_height = int(rect[3] - rect[1])
+            width_close = abs(rect_width - width) <= max(12, width * 0.15)
+            height_close = abs(rect_height - height) <= max(12, height * 0.15)
+            return list(rect) if width_close and height_close else None
+        except Exception:
+            return None
+
     def _fit_measurement(self, doc, points, min_fill=0.35,
                          max_fill=0.90, max_center_offset=0.18):
         """Measure a model-space point cloud in actual screen pixels."""
@@ -266,27 +293,69 @@ class ViewOperations:
         frame_height = int(com_get(view, "FrameHeight", default=0) or 0)
         if not transform_data or frame_width <= 0 or frame_height <= 0:
             raise RuntimeError("View pixel transform/frame size unavailable")
-        pixels = [transform_point(transform_data, point) for point in points]
-        xs = [point[0] for point in pixels]
-        ys = [point[1] for point in pixels]
-        bbox = [min(xs), min(ys), max(xs), max(ys)]
-        width_ratio = max(0.0, bbox[2] - bbox[0]) / frame_width
-        height_ratio = max(0.0, bbox[3] - bbox[1]) / frame_height
-        fill = max(width_ratio, height_ratio)
-        center_x = (bbox[0] + bbox[2]) * 0.5
-        center_y = (bbox[1] + bbox[3]) * 0.5
-        center_offset = math.hypot(
-            (center_x - frame_width * 0.5) / frame_width,
-            (center_y - frame_height * 0.5) / frame_height)
-        clipped = (bbox[0] < -1.0 or bbox[1] < -1.0 or
-                   bbox[2] > frame_width + 1.0 or
-                   bbox[3] > frame_height + 1.0)
+        raw_pixels = [transform_point(transform_data, point)
+                      for point in points]
+
+        def candidate(origin_x, origin_y, width, height, coordinate_space):
+            xs = [point[0] - origin_x for point in raw_pixels]
+            ys = [point[1] - origin_y for point in raw_pixels]
+            bbox = [min(xs), min(ys), max(xs), max(ys)]
+            width_ratio = max(0.0, bbox[2] - bbox[0]) / width
+            height_ratio = max(0.0, bbox[3] - bbox[1]) / height
+            fill = max(width_ratio, height_ratio)
+            center_x = (bbox[0] + bbox[2]) * 0.5
+            center_y = (bbox[1] + bbox[3]) * 0.5
+            center_offset = math.hypot(
+                (center_x - width * 0.5) / width,
+                (center_y - height * 0.5) / height)
+            overflow = sum([
+                max(0.0, -bbox[0]), max(0.0, -bbox[1]),
+                max(0.0, bbox[2] - width),
+                max(0.0, bbox[3] - height),
+            ]) / max(width, height)
+            clipped = (bbox[0] < -1.0 or bbox[1] < -1.0 or
+                       bbox[2] > width + 1.0 or
+                       bbox[3] > height + 1.0)
+            fill_penalty = (abs(math.log(max(fill, 1e-9) / 0.55))
+                            if fill > 0.0 else 100.0)
+            return {
+                "bbox": bbox, "width": width, "height": height,
+                "width_ratio": width_ratio, "height_ratio": height_ratio,
+                "fill": fill, "center_offset": center_offset,
+                "clipped": clipped,
+                "coordinate_space": coordinate_space,
+                "origin": [origin_x, origin_y],
+                "plausibility_score": overflow * 4.0 + center_offset +
+                fill_penalty * 0.1,
+            }
+
+        candidates = [candidate(
+            0.0, 0.0, frame_width, frame_height, "view_local")]
+        viewport_rect = self._fit_viewport_screen_rect(view)
+        if viewport_rect:
+            candidates.append(candidate(
+                float(viewport_rect[0]), float(viewport_rect[1]),
+                float(viewport_rect[2] - viewport_rect[0]),
+                float(viewport_rect[3] - viewport_rect[1]),
+                "physical_screen"))
+        measured = min(candidates, key=lambda item: item["plausibility_score"])
+        bbox = measured["bbox"]
+        frame_width = measured["width"]
+        frame_height = measured["height"]
+        width_ratio = measured["width_ratio"]
+        height_ratio = measured["height_ratio"]
+        fill = measured["fill"]
+        center_offset = measured["center_offset"]
+        clipped = measured["clipped"]
         verified = (min_fill <= fill <= max_fill and
                     center_offset <= max_center_offset and not clipped)
         return {
             "verified": verified,
             "screen_bbox_px": [round(value, 3) for value in bbox],
             "frame_px": [frame_width, frame_height],
+            "coordinate_space": measured["coordinate_space"],
+            "frame_origin_screen_px": [round(value, 3)
+                                       for value in measured["origin"]],
             "width_ratio": round(width_ratio, 6),
             "height_ratio": round(height_ratio, 6),
             "dominant_fill_ratio": round(fill, 6),
@@ -1253,10 +1322,23 @@ class ViewOperations:
                 pass
 
             if full_window:
-                return self._capture_sw_window(path, compress, width, height)
-
-            return self._capture_model_image(doc, path, compress,
-                                             width, height)
+                result = self._capture_sw_window(path, compress, width, height)
+            else:
+                result = self._capture_model_image(doc, path, compress,
+                                                    width, height)
+            # Explicit dimensions apply to every capture backend, including
+            # uncompressed and viewport-fallback images.
+            if result.get("success") and (width or height):
+                from PIL import Image
+                with Image.open(path) as source:
+                    img = source.copy()
+                img.thumbnail((width or img.width, height or img.height),
+                              Image.Resampling.LANCZOS)
+                img.save(path)
+                result.setdefault("data", {}).update(
+                    width=img.width, height=img.height,
+                    size_bytes=os.path.getsize(path))
+            return result
         except Exception as e:
             logger.error(f"Screenshot error: {e}\n{traceback.format_exc()}")
             return self._result(False, f"Error: {e}", SwErrors.swExportError)

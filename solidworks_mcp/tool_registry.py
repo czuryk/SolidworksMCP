@@ -6,6 +6,7 @@ import inspect
 from typing import Any, Dict
 
 from mcp.types import Tool
+from .shape_tools import SHAPE_TOOLS, SHAPE_TOOL_NAMES
 
 
 def _object(description, properties=None, required=None):
@@ -20,10 +21,9 @@ def _array(description, items=None):
                                "additionalProperties": True}}
 
 
-NEW_TOOLS = [
+NEW_TOOLS = SHAPE_TOOLS + [
     Tool(name="run_transaction",
-         description="Run a whitelisted sequence in one COM session with a "
-                     "save-copy checkpoint, invariants, idempotency, and full rollback.",
+         description='Execute a whitelisted operation sequence with checkpoint, invariants and rollback. For expert operations; execute_model_code already owns its transaction.',
          inputSchema=_object("Transactional CAD operation", {
              "name": {"type": "string"},
              "operations": _array("Ordered {op,args,when} operations"),
@@ -37,8 +37,7 @@ NEW_TOOLS = [
              "allow_unsaved_document": {"type": "boolean", "default": False}},
              ["name", "operations"])),
     Tool(name="execute_cad_plan",
-         description="Execute a bounded declarative CAD plan. Supports $steps.N "
-                     "result references and only predefined safe conditions.",
+         description='Run a bounded expert operation plan with $steps.N result references and predefined conditions. Use execute_model_code for ordinary shape composition.',
          inputSchema=_object("CAD plan", {
              "plan_id": {"type": "string"}, "operations": _array("Plan steps"),
              "transaction": _object("Checkpoint/rollback policy"),
@@ -48,10 +47,7 @@ NEW_TOOLS = [
              "allow_unsaved_document": {"type": "boolean", "default": False}},
              ["plan_id", "operations"])),
     Tool(name="create_parametric_sketch",
-         description="Atomically create named line/arc/circle/spline geometry, "
-                     "relations, batched dimensions, equations, one rebuild, "
-                     "topology validation, persistent IDs, rollback, and "
-                     "verified Normal To / pixel-measured Fit to Screen.",
+         description='Create named primitives, relations, dimensions and equations atomically with one rebuild, topology checks and rollback. Automatically verifies 2D working-view orientation and fit.',
          inputSchema=_object("Parametric sketch", {
              "name": {"type": "string"},
              "plane": {"type": "string", "enum": ["Front", "Top", "Right"]},
@@ -69,10 +65,7 @@ NEW_TOOLS = [
                                       "reference_spline", "construction_reference"]}},
              ["name", "entities"])),
     Tool(name="add_dimensions_batch",
-         description="Create driving dimensions with swInputDimValOnCreate "
-                     "suppressed and restored, one rebuild, verified values, "
-                     "request-id/name mapping, atomic rollback, and verified "
-                     "Normal To / Fit when the sketch is activated.",
+         description='Add driving dimensions in one rebuild with verified values and atomic rollback. Suppresses/restores the value-entry dialog and fits an activated sketch.',
          inputSchema=_object("Dimension batch", {
              "sketch_name": {"type": "string"},
              "dimensions": _array("Dimension requests"),
@@ -92,29 +85,23 @@ NEW_TOOLS = [
              "include_recommendations": {"type": "boolean", "default": True}},
              ["sketch_name"])),
     Tool(name="get_session_metrics",
-         description="Return MCP/COM call counts, rebuild/solver/rollback metrics, "
-                     "saved-result progress, artifact ratio, and per-tool timing.",
+         description='Read runtime counters of the expert transaction layer: rebuild/rollback counts, per-tool timings and the progress of the active operation. To review a modeling run (calls, answer sizes, slowest operations) use get_session_report.',
          inputSchema=_object("Metrics")),
     Tool(name="get_capabilities",
-         description="Discover SolidWorks/MCP versions, typed interfaces, native "
-                     "operations, image/geometry backends, export formats, limits, "
-                     "and version-specific known limitations.",
+         description='Inspect installed interfaces, operations, backends, export formats and limits when diagnosing an unsupported operation. Ordinary modeling starts with get_model_context.',
          inputSchema=_object("Capabilities")),
     Tool(name="recover_environment",
-         description="Finite recovery policy: UI check, clear selection, exit "
-                     "sketch edit, repair Freeze Bar, and at most one explicit retry.",
+         description='Apply a bounded recovery policy: inspect UI, clear selection, exit sketch, repair Freeze Bar and at most one explicitly requested retry. Does not resolve an unknown COM outcome.',
          inputSchema=_object("Recovery request", {
              "retry_operation": _object("Optional {op,args} retry"),
              "max_retries": {"type": "integer", "minimum": 0, "maximum": 1}})),
+    Tool(name="restart_solidworks",
+         description='Verified SolidWorks restart. Use it to release memory after a SOLIDWORKS_MEMORY_HIGH warning (get_executor_status: memory), and for a quarantined session whose MCP owner process exited (owner_alive=false); then follow with reconcile_session(operation_id). Lists open documents and refuses when any is unsaved unless discard_unsaved=true; then exits SolidWorks, waits for the process to end, starts it and reconnects. Documents are not reopened: shape tools open document_path themselves. Returns previous and new PIDs. Takes minutes: collect with wait_operation.',
+         inputSchema=_object("Restart request", {
+             "discard_unsaved": {"type": "boolean", "default": False,
+                                 "description": "Close unsaved documents without saving and end an unresponsive process"}})),
     Tool(name="image_to_sketch",
-         description="GPU raster-to-CAD pipeline using SAM 2.1/ViTMatte for "
-                     "regions and a verified DexiNed+TEED ensemble for line art, "
-                     "with explicit trace/output modes, verified four-point "
-                     "homography rectification, and "
-                     "complexity-bounded B-spline/primitive optimization, "
-                     "independent perturbation checks, "
-                     "reverse-raster validation, an isolated timeout-controlled "
-                     "analysis worker, and transactional vector-only SolidWorks commit.",
+         description='Convert raster line art or silhouettes into validated native sketch geometry. Use for an actual tracing task; choose trace/output modes and calibration explicitly. Analysis is isolated; CAD commit is transactional. Ordinary 3D references do not require tracing.',
          inputSchema=_object("Image vectorization", {
              "image_path": {"type": "string"}, "sketch_name": {"type": "string"},
              "plane": {"type": "string", "enum": ["Front", "Top", "Right"]},
@@ -301,12 +288,7 @@ NEW_TOOLS = [
              "unit": {"type": "string"}, "report_path": {"type": "string"}},
              ["reference_sketch", "candidate_sketch"])),
     Tool(name="compare_sketch_to_reference",
-         description="Reverse-rasterize topology-preserving CAD primitives against a "
-                     "calibrated image/mask without automatic best-fit. Handles nested "
-                     "contours and holes, returns symmetric metrics, maximum-deviation "
-                     "zones, true per-entity attribution, PNG/SVG overlays and a report. "
-                     "Native CAD export stays in COM; all image/scientific libraries run "
-                     "in a timeout-controlled isolated worker.",
+         description='Compare actual CAD contours with a calibrated image/mask without automatic best-fit. Returns symmetric errors, per-entity attribution and overlays. CAD export runs on STA; raster metrics run in an isolated worker.',
          inputSchema=_object("Sketch/reference comparison", {
              "sketch_name": {"type": "string"},
              "reference_image": {"type": "string"},
@@ -326,9 +308,7 @@ NEW_TOOLS = [
              "outputs": _object("PNG/SVG/report artifacts")},
              ["sketch_name", "image_path"])),
     Tool(name="create_revolved_body",
-         description="Create a named parametric profile and axis, revolve it, verify "
-                     "faces/body/bbox/volume, atomically rename the real feature/body, "
-                     "checkpoint and save. Always creates a distinct body (merge=false).",
+         description='Create and verify a separate revolved body from an explicit parametric sketch/axis with checkpoint and save. Use for profiles with arcs or splines; model.revolve covers polyline profiles, open or closed (rings, bushings).',
          inputSchema=_object("Revolved body", {
              "sketch": _object("create_parametric_sketch args"),
              "revolve": _object("revolve_boss args"),
@@ -338,13 +318,7 @@ NEW_TOOLS = [
              "idempotency_key": {"type": "string"}},
              ["sketch", "revolve", "body_name"])),
     Tool(name="create_swept_member",
-         description="Atomically create/use a path and create a circular, elliptical "
-                     "or custom-profile sweep. Checks line/spline self-intersection, "
-                     "branches, sharp corners, numeric spline/arc bend radius, exact "
-                     "SOLIDWORKS selection marks, profile-plane contact, faces, bbox, "
-                     "body name and volume. On SW2026 circles are materialized as a "
-                     "native profile sketch; the blocking special circular mode is "
-                     "never called.",
+         description='Create a checked sweep from a new/existing path and circular, elliptical or custom profile. Validates path and profile contact; uses a native circle sketch on SW2026. For ordinary round members use model.tube or model.variable_tube.',
          inputSchema=_object("Swept member", {
              "path_sketch": {"type": "string"},
              "path": _object("Optional create_parametric_sketch path args"),
@@ -374,8 +348,7 @@ NEW_TOOLS = [
              "unit": {"type": "string"}, "auto_verify": {"type": "boolean"}},
              ["profile", "body_name"])),
     Tool(name="create_multibody_insert",
-         description="Create a separate insert body and scoped host pocket with explicit "
-                     "clearance, then verify both bodies and interference in one rollback-safe call.",
+         description='Create an insert and scoped host pocket from explicit profiles with clearance verification and rollback. Useful for planar profile fits in a hand-built part. In a shape program start from a template (model_api_lookup: template:inlay, template:pin_socket, template:curved_inlay); model.surface_patch handles supported curved skins.',
          inputSchema=_object("Multibody insert", {
              "insert_sketch": _object("Insert profile"),
              "insert_extrude": _object("Insert boss"),
@@ -398,10 +371,7 @@ NEW_TOOLS = [
              "kind": {"type": "string"}, "parameters": _object("Pattern parameters")},
              ["kind", "parameters"])),
     Tool(name="export_bundle",
-         description="Rebuild and verify named solid bodies, stage SLDPRT, STEP and "
-                     "selected-body STLs beside their targets, structurally inspect every "
-                     "format, then atomically replace all files with hash verification and "
-                     "full rollback before writing a SHA-256 manifest.",
+         description='Export selected bodies to explicit SLDPRT/STEP/STL destinations with rebuild, structural checks, hashes and atomic rollback. Supports expert destination/overwrite workflows; export_model is the stricter new-directory shape delivery route.',
          inputSchema=_object("Export bundle", {
              "sldprt_path": {"type": "string"}, "step_path": {"type": "string"},
              "stl_directory": {"type": "string"},
@@ -413,12 +383,7 @@ NEW_TOOLS = [
              "unit": {"type": "string"}},
              ["sldprt_path", "step_path", "stl_directory"])),
     Tool(name="compare_body_silhouette_to_image",
-         description="Export selected bodies as deterministic native meshes, project the "
-                     "triangle union orthographically, and compare it to a reference with "
-                     "an explicit model-mm-to-pixel transform. A framed screenshot remains "
-                     "independent visual evidence; legacy screenshot segmentation is "
-                     "diagnostic and opt-in. Reports symmetric metric deviations and "
-                     "maximum-deviation zones; bbox best-fit remains diagnostic and opt-in.",
+         description='Compare selected native body mesh silhouettes with a calibrated image transform. Returns symmetric deviations and overlays; native capture and raster comparison use separate bounded workers. Best-fit alignment and screenshot segmentation are diagnostic opt-ins. For the ordinary likeness check of a whole model use compare_reference(source="native"): one call, no transform; this tool remains for a subset of bodies, line drawings and an explicit affine transform.',
          inputSchema=_object("Body silhouette comparison", {
              "reference_image": {"type": "string"},
              "screenshot_path": {"type": "string"},
@@ -443,8 +408,7 @@ NEW_TOOLS = [
              "outputs": _object("Overlay/report paths")},
              ["reference_image", "screenshot_path"])),
     Tool(name="sync_model_graph",
-         description="Topologically sort and diff a declarative CAD DAG, preview changes, "
-                     "or apply only changed whitelisted nodes transactionally.",
+         description='Diff and apply a whitelisted expert operation DAG transactionally. Retained for operation graphs beyond shape constructors; execute_model_code owns ordinary shape dependencies.',
          inputSchema=_object("Declarative model graph", {
              "graph_id": {"type": "string"}, "nodes": _array("DAG nodes"),
              "mode": {"type": "string", "enum": ["plan", "apply"]},
@@ -472,6 +436,8 @@ MUTATING_TOOLS = {
                        "render_sketch_svg", "compare_sketches",
                        "compare_sketch_to_reference", "compare_sketch_to_image",
                        "compare_body_silhouette_to_image"})
+MUTATING_TOOLS -= {"get_model_context", "model_api_lookup", "measure_reference", "compare_reference",
+                   "inspect_model"}
 
 FIRST_GEOMETRY_TOOLS = {
     "create_sketch", "create_sketch_on_face", "sketch_contour",
@@ -483,6 +449,8 @@ FIRST_GEOMETRY_TOOLS = {
 
 def augment_tool_schemas(tools):
     for tool in tools:
+        if tool.name in SHAPE_TOOL_NAMES:
+            continue
         if tool.name not in MUTATING_TOOLS:
             continue
         properties = tool.inputSchema.setdefault("properties", {})
@@ -507,6 +475,23 @@ def augment_tool_schemas(tools):
 def dispatch_new_tool(automation, name: str, arguments: Dict[str, Any]):
     method = getattr(automation, name)
     signature = inspect.signature(method)
+    arguments = dict(arguments or {})
+    presentation = {}
+    if name in SHAPE_TOOL_NAMES:
+        # Presentation options shape the answer; they never reach the service.
+        options = ('verbose', 'detail', 'components') if name == 'get_model_context' else ('verbose',)
+        presentation = {key: arguments.pop(key) for key in options if key in arguments}
+        if presentation.get('detail', 'summary') not in {'summary', 'full'}:
+            return automation._error("INVALID_ARGUMENTS", "detail must be summary or full")
+        unknown = sorted(set(arguments or {}) - set(signature.parameters))
+        if unknown:
+            return automation._error(
+                "INVALID_ARGUMENTS", "Unknown shape tool arguments",
+                details={"unknown": unknown})
     accepted = {key: value for key, value in (arguments or {}).items()
                 if key in signature.parameters}
-    return method(**accepted)
+    result = method(**accepted)
+    if name in SHAPE_TOOL_NAMES and not presentation.get('verbose'):
+        from .shape_responses import compact_response
+        result = compact_response(name, presentation, result)
+    return result

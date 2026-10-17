@@ -26,6 +26,7 @@ import inspect
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import pythoncom
@@ -33,6 +34,100 @@ import win32com.client
 from win32com.client import VARIANT, gencache
 
 logger = logging.getLogger(__name__)
+
+RPC_DISCONNECT_HRESULTS = {-2147023174, -2147023170, -2147417848, -2147220995}
+
+
+def is_rpc_disconnect(exc):
+    return getattr(exc, 'hresult', None) in RPC_DISCONNECT_HRESULTS
+
+
+@contextmanager
+def command_scope(app):
+    """Batch external CAD calls on the existing STA; always restore owner state.
+
+    This does not acquire a lease or make COM parallel-safe. Callers already
+    belong to the serialized executor. Explicit redraws remain the capture
+    boundary; suppressing incidental updates must never reuse old pixels.
+    """
+    native = typed(app, "ISldWorks")
+    if native is None:
+        raise RuntimeError("Typed ISldWorks is required for a command scope")
+    previous = bool(com_get(native, "CommandInProgress"))
+    failed = False
+    try:
+        native.CommandInProgress = True
+        yield
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        try:
+            native.CommandInProgress = previous
+        except Exception:
+            if not failed:
+                raise
+            logger.warning('Command scope restoration failed after the original operation error', exc_info=True)
+
+@contextmanager
+def build_scope(doc):
+    """Suspend feature-tree and graphics refresh while a batch of features is created.
+
+    Every sketch exit and feature otherwise repaints the tree and the view; on a
+    long build that is most of the wall time. State is always restored and the
+    view redrawn. SOLIDWORKS_MCP_LIVE_BUILD=1 keeps the live refresh.
+    """
+    if os.environ.get("SOLIDWORKS_MCP_LIVE_BUILD") == "1":
+        yield
+        return
+    restore = []
+    try:
+        for name in ("EnableFeatureTree", "EnableFeatureTreeWindow"):
+            try:
+                manager = doc.FeatureManager
+                previous = bool(getattr(manager, name))
+                setattr(manager, name, False)
+                restore.append((manager, name, previous))
+            except Exception:
+                pass
+        try:
+            view = doc.ActiveView
+            previous = bool(view.EnableGraphicsUpdate)
+            view.EnableGraphicsUpdate = False
+            restore.append((view, "EnableGraphicsUpdate", previous))
+        except Exception:
+            pass
+        yield
+    finally:
+        for target, name, previous in reversed(restore):
+            try:
+                setattr(target, name, previous)
+            except Exception:
+                pass
+        try:
+            doc.GraphicsRedraw2()
+        except Exception:
+            pass
+
+
+@contextmanager
+def live_graphics(doc):
+    """Temporarily allow view updates inside a build scope, for view-dependent native calls."""
+    try:
+        view = doc.ActiveView
+        previous = bool(view.EnableGraphicsUpdate)
+        view.EnableGraphicsUpdate = True
+    except Exception:
+        view = None
+    try:
+        yield
+    finally:
+        if view is not None:
+            try:
+                view.EnableGraphicsUpdate = previous
+            except Exception:
+                pass
+
 
 _MISSING = object()
 
@@ -104,6 +199,8 @@ def com_get(obj, name, *args, default=_MISSING):
             return value(*args)
         return value
     except Exception as first_err:
+        if is_rpc_disconnect(first_err):
+            raise  # Do not mask or repeat a disconnected RPC, even with a default.
         # Property-get failed; retry as an explicit method call.
         # _FlagAsMethod exists only on dynamic CDispatch objects.
         try:
@@ -481,6 +578,26 @@ def _classify_dialog(detail):
     return "unknown", 0.25
 
 
+# Visible owned windows that take no input: tooltips and drop shadows.
+NON_INTERACTIVE_WINDOW_CLASSES = {'tooltips_class32', 'SysShadow'}
+
+
+def window_blocks_ui(main_enabled, cls, title, controls):
+    """Whether one visible SolidWorks-owned window stops API work.
+
+    With the main frame disabled anything meaningful counts. With it enabled
+    only a real dialog blocks: the dialog class, or a titled window that has
+    child controls. Tooltips, shadows and bare untitled popups do not.
+    """
+    if not main_enabled:
+        return True
+    if cls in NON_INTERACTIVE_WINDOW_CLASSES:
+        return False
+    if cls == "#32770":
+        return True
+    return bool(title) and bool(controls)
+
+
 def _detect_modal_dialog_fast():
     """Non-blocking watchdog scan using only a verified main HWND/PID.
 
@@ -529,6 +646,11 @@ def _detect_modal_dialog_fast():
                 pid = int(win32process.GetWindowThreadProcessId(hwnd)[1])
                 if pid != cached_pid:
                     return True
+                cls = win32gui.GetClassName(hwnd)
+                if cls == 'swWelcomeScreen':
+                    return True  # Modeless start page; disabled main is handled above.
+                if cls in NON_INTERACTIVE_WINDOW_CLASSES:
+                    return True  # A tooltip over a toolbar is not a dialog.
                 if main_hwnd in _window_owner_chain(hwnd, win32gui):
                     owned_popups.append(int(hwnd))
             except Exception:
@@ -653,6 +775,8 @@ def detect_modal_dialog(include_controls=True):
         for hwnd, cls, title, pid in windows:
             if pid != sw_pid or hwnd == main[0]:
                 continue
+            if enabled and cls == 'swWelcomeScreen':
+                continue  # No dismissal or confirmation; this is a modeless start page.
             owners = _window_owner_chain(hwnd, win32gui)
             try:
                 style = int(win32gui.GetWindowLong(hwnd, -16))
@@ -674,6 +798,7 @@ def detect_modal_dialog(include_controls=True):
                 bounds = None
             detail = {
                 "hwnd": int(hwnd), "title": title or "<untitled dialog>",
+                "blocking": window_blocks_ui(enabled, cls, title, controls),
                 "class": cls, "pid": int(pid),
                 "owner_chain": [int(v) for v in owners],
                 "enabled": bool(win32gui.IsWindowEnabled(hwnd)),
@@ -687,13 +812,16 @@ def detect_modal_dialog(include_controls=True):
             detail["text"] = "\n".join(
                 c["text"] for c in controls if c.get("text"))[:2048]
             info["window_details"].append(detail)
-            info["dialogs"].append(detail["title"])
+            if detail["blocking"]:
+                info["dialogs"].append(detail["title"])
 
-        info["modal"] = (not enabled) or bool(info["window_details"])
+        blocking = [d for d in info["window_details"] if d["blocking"]]
+        info["modal"] = (not enabled) or bool(blocking)
+        if not info["modal"]:
+            info.pop("detected_at", None)
         if info["modal"]:
-            known = bool(info["window_details"]) and all(
-                d["classification"] != "unknown"
-                for d in info["window_details"])
+            known = bool(blocking) and all(
+                d["classification"] != "unknown" for d in blocking)
             info["state"] = ("UI_BLOCKED_KNOWN_DIALOG" if known
                              else "UI_BLOCKED_UNKNOWN_DIALOG")
     except Exception as e:

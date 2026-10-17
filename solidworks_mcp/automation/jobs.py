@@ -23,6 +23,7 @@ import threading
 import traceback
 from pathlib import Path
 from typing import Dict, Optional
+from .session_lease import SessionLease
 
 logger = logging.getLogger(__name__)
 
@@ -507,7 +508,9 @@ class JobManager:
         old_stdout, old_stderr = sys.stdout, sys.stderr
         cap_out, cap_err = io.StringIO(), io.StringIO()
         com_ready = False
+        lease = None
         try:
+            lease = SessionLease().acquire()
             pythoncom.CoInitialize()
             com_ready = True
             exec_globals = context_factory()
@@ -551,6 +554,8 @@ class JobManager:
             logger.error(f"Job {job.id} failed: {e}")
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
+            if lease is not None:
+                lease.close()
             if com_ready:
                 try:
                     pythoncom.CoUninitialize()

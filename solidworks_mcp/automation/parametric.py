@@ -174,8 +174,8 @@ class ParametricSketchOperations:
     def _sketch_specific(self, feature):
         return com_get(feature, "GetSpecificFeature2", default=None)
 
-    def _activate_sketch_feature(self, doc, feature):
-        self._last_sketch_activation_orientation = None
+    def _ensure_sketch_active(self, doc, feature):
+        """Open *feature* for editing without changing the camera."""
         try:
             current = doc.SketchManager.ActiveSketch
             if current is not None:
@@ -183,10 +183,7 @@ class ParametricSketchOperations:
                 if current_feature is not None and str(com_get(
                         current_feature, "Name", default="")) == str(com_get(
                             feature, "Name", default="")):
-                    orientation = self._auto_normal_to(
-                        doc, zoom_to_fit=True)
-                    self._last_sketch_activation_orientation = orientation
-                    return bool(orientation.get("success"))
+                    return True
                 doc.SketchManager.InsertSketch(True)
         except Exception:
             pass
@@ -199,7 +196,17 @@ class ParametricSketchOperations:
         if not selected:
             return False
         doc.SketchManager.InsertSketch(True)
-        if doc.SketchManager.ActiveSketch is None:
+        active = com_get(doc.SketchManager, "ActiveSketch", default=None)
+        if active is None:
+            return False
+        active_feature = com_get(active, "GetFeature", default=None)
+        return (active_feature is None or str(com_get(
+            active_feature, "Name", default="")) == str(com_get(
+                feature, "Name", default="")))
+
+    def _activate_sketch_feature(self, doc, feature):
+        self._last_sketch_activation_orientation = None
+        if not self._ensure_sketch_active(doc, feature):
             return False
         orientation = self._auto_normal_to(doc, zoom_to_fit=True)
         self._last_sketch_activation_orientation = orientation
@@ -389,6 +396,10 @@ class ParametricSketchOperations:
             center = self._to_sketch_m(doc, entity["center"], unit)
             start = self._to_sketch_m(doc, entity["start"], unit)
             end = self._to_sketch_m(doc, entity["end"], unit)
+            radii = [math.dist(center, point) for point in (start, end)]
+            if (not all(math.isfinite(r) and r > 0 for r in radii) or
+                    abs(radii[0] - radii[1]) > 1e-9):
+                raise ValueError("Arc endpoints must lie on the same circle")
             segment = manager.CreateArc(*center, *start, *end,
                                         int(entity.get("direction", 1)))
         elif entity_type in {"arc_3pt", "three_point_arc"}:
@@ -410,6 +421,8 @@ class ParametricSketchOperations:
             center = self._to_sketch_m(doc, center_source, unit)
             major_source = entity.get("major_point")
             minor_source = entity.get("minor_point")
+            if (major_source is None) != (minor_source is None):
+                raise ValueError("Ellipse requires both axis points or both radii")
             if major_source is None or minor_source is None:
                 major_radius = float(entity.get("major_radius", 0.0))
                 minor_radius = float(entity.get("minor_radius", 0.0))
@@ -421,15 +434,19 @@ class ParametricSketchOperations:
                     raise ValueError(
                         "Ellipse major_radius and minor_radius must be "
                         "finite and positive")
-                cx, cy = map(float, center_source[:2])
-                major_source = [
-                    cx + major_radius * math.cos(rotation),
-                    cy + major_radius * math.sin(rotation)]
-                minor_source = [
-                    cx - minor_radius * math.sin(rotation),
-                    cy + minor_radius * math.cos(rotation)]
-            major = self._to_sketch_m(doc, major_source, unit)
-            minor = self._to_sketch_m(doc, minor_source, unit)
+                # Radii and rotation are sketch-local. Transform the center
+                # first; do not combine model XY with sketch-local endpoints.
+                major_m = self._units.to_meters(major_radius, unit)
+                minor_m = self._units.to_meters(minor_radius, unit)
+                major = (center[0] + major_m * math.cos(rotation),
+                         center[1] + major_m * math.sin(rotation), center[2])
+                minor = (center[0] - minor_m * math.sin(rotation),
+                         center[1] + minor_m * math.cos(rotation), center[2])
+            else:
+                if len(major_source) != len(center_source) or len(minor_source) != len(center_source):
+                    raise ValueError("Ellipse center and axis points must use the same coordinate frame")
+                major = self._to_sketch_m(doc, major_source, unit)
+                minor = self._to_sketch_m(doc, minor_source, unit)
             if (math.dist(center, major) <= 1e-12 or
                     math.dist(center, minor) <= 1e-12):
                 raise ValueError("Ellipse axes must be non-zero")
@@ -556,6 +573,17 @@ class ParametricSketchOperations:
         about = constraint.get("about")
         if about:
             refs.append(about)
+        if ctype == "coincident" and len(refs) == 2:
+            resolved = [self._resolve_entity_ref(records, ref) for ref in refs]
+            if all(kind in {"start", "end", "center"} and obj is not None
+                   for kind, obj in resolved):
+                identities = [self._persist(doc, obj)
+                              for _, obj in resolved]
+                if identities[0] and identities[0] == identities[1]:
+                    # AddToDB still allows native endpoint sharing. A relation
+                    # to the same SketchPoint is unnecessary and may be rejected.
+                    return {"type": ctype, "created": False,
+                            "status": "SHARED_NATIVE_POINT"}
         doc.ClearSelection2(True)
         selected = 0
         for ref in refs:
@@ -577,7 +605,8 @@ class ParametricSketchOperations:
             if allow_redundant:
                 return None
             raise RuntimeError(f"SolidWorks rejected {ctype} relation")
-        return {"type": ctype, "before": before, "after": after}
+        return {"type": ctype, "created": True,
+                "before": before, "after": after}
 
     def _active_relation_count(self, doc):
         sketch = com_get(com_get(
@@ -979,10 +1008,6 @@ class ParametricSketchOperations:
                                  unit: str = None,
                                  idempotency_key: str = None,
                                  output_mode: str = None) -> Dict:
-        cached = self._runtime.idempotent_get(idempotency_key)
-        if cached is not None:
-            cached.setdefault("data", {})["idempotent_replay"] = True
-            return cached
         entities = list(entities or [])
         constraints = list(constraints or [])
         dimensions = list(dimensions or [])
@@ -1203,14 +1228,31 @@ class ParametricSketchOperations:
             if topology_error:
                 raise _SketchValidationError(
                     "SKETCH_OPEN_CONTOUR", topology_error)
+            # EditRebuild3 can leave the newly created ProfileFeature intact
+            # while silently clearing SketchManager.ActiveSketch.  Reopen the
+            # exact feature before enforcing the working-view postcondition.
+            created_feature = self._find_sketch_feature(doc, name) or created_feature
+            if (created_feature is None or
+                    not self._ensure_sketch_active(doc, created_feature)):
+                raise _SketchValidationError(
+                    "SKETCH_WORKING_VIEW_UNAVAILABLE",
+                    "Created sketch could not be reactivated after rebuild",
+                    details={"sketch": name, "rebuild_count": rebuild_count})
             orientation_after = self._auto_normal_to(
                 doc, zoom_to_fit=True)
             if not orientation_after.get("success"):
-                raise RuntimeError(
+                raise _SketchValidationError(
+                    "SKETCH_WORKING_VIEW_FAILED",
                     "Normal To / Fit to Screen verification failed after "
-                    f"parametric geometry creation: {orientation_after}")
+                    f"parametric geometry creation: {orientation_after}",
+                    details={"sketch": name,
+                             "orientation": orientation_after})
             target = solve.get("target")
-            if target == "fully_defined" and status != "fully_defined":
+            solve_target_evaluation_skipped = bool(
+                target == "fully_defined" and
+                constraint_status_evaluation_skipped)
+            if (target == "fully_defined" and status != "fully_defined" and
+                    not solve_target_evaluation_skipped):
                 if solve.get("allow_fix_fallback", False):
                     raise _SketchValidationError(
                         "SKETCH_UNDERDEFINED",
@@ -1233,8 +1275,14 @@ class ParametricSketchOperations:
                 "status_code": status_code,
                 "constraint_status_evaluation_skipped":
                     constraint_status_evaluation_skipped,
+                "solve_target_evaluation_skipped":
+                    solve_target_evaluation_skipped,
                 "entities_created": len(records),
-                "relations_created": len(relations_created),
+                "relations_created": sum(bool(item and item.get("created", True))
+                                         for item in relations_created),
+                "relations_already_satisfied": sum(
+                    bool(item and item.get("status") == "SHARED_NATIVE_POINT")
+                    for item in relations_created),
                 "locked_trace_relations_skipped":
                     locked_trace_relations_skipped,
                 "dimensions_created": len(dimension_results),
@@ -1270,24 +1318,25 @@ class ParametricSketchOperations:
             }
             result = self._result(True, f"Parametric sketch '{name}' created",
                                   SwErrors.swSuccess, data)
-            self._runtime.idempotent_put(idempotency_key, result)
             return result
         except _SketchValidationError as exc:
             restored = False
             if transaction.get("rollback_on_failure", True) and created_feature is not None:
                 restored = self._rollback_created_sketch(created_feature, name)
             return self._error(exc.code, str(exc),
-                               document_restored=restored,
-                               details=exc.details)
+                               document_restored=False,
+                               details={**exc.details,
+                                        "created_sketch_removed": restored})
         except Exception as exc:
             restored = False
             if transaction.get("rollback_on_failure", True) and created_feature is not None:
                 restored = self._rollback_created_sketch(created_feature, name)
             return self._error(
                 "SKETCH_OVERDEFINED", f"Atomic sketch failed: {exc}",
-                document_restored=restored,
+                document_restored=False,
                 com_hresult=getattr(exc, "hresult", None),
-                details={"entities_created": len(records),
+                details={"created_sketch_removed": restored,
+                         "entities_created": len(records),
                          "relations_created": len(relations_created),
                          "phase_timings_sec": phase_timings,
                          "slowest_entities": sorted(
@@ -2469,7 +2518,7 @@ class ParametricSketchOperations:
                 "constraint_status": geometry["sketch"].get(
                     "constraint_status"),
             } for geometry in layers],
-            "mcp_version": "6.5.31", "invert_y_for_display": bool(
+            "mcp_version": "6.5.32", "invert_y_for_display": bool(
                 view.get("invert_y_for_display", True))})
         root_group = ET.SubElement(svg, "g")
         if view.get("invert_y_for_display", True):

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..constants import SwErrors
+from .progress import update_progress, progress_snapshot
 from .com_utils import (com_get, detect_modal_dialog,
                         resolve_solidworks_constant)
 
@@ -31,15 +32,21 @@ ERROR_DEFAULTS = {
     "SKETCH_OVERDEFINED": ("solve", True),
     "SKETCH_OPEN_CONTOUR": ("validate_topology", True),
     "SKETCH_SELF_INTERSECTION": ("validate_topology", True),
+    "SKETCH_WORKING_VIEW_UNAVAILABLE": ("working_view", True),
+    "SKETCH_WORKING_VIEW_FAILED": ("working_view", True),
     "FEATURE_DEAD": ("verify_feature", True),
     "FEATURE_WRONG_BBOX": ("verify_feature", True),
     "UNEXPECTED_BODY_MERGE": ("verify_feature", True),
     "BODY_INTERFERENCE": ("verify_body", True),
     "DOCUMENT_UNSAVED": ("preflight", True),
+    "CHECKPOINT_REQUIRES_SAVED_DOCUMENT": ("checkpoint", True),
+    "CHECKPOINT_FAILED": ("checkpoint", True),
+    "SKETCH_COMMIT_FAILED": ("commit", True),
     "TRANSACTION_ROLLBACK_FAILED": ("rollback", False),
     "IMAGE_LOW_CONFIDENCE": ("validate_image", True),
     "REFERENCE_MISMATCH": ("validate_reference", True),
     "BUDGET_EXCEEDED": ("budget", True),
+    "WORKER_CANCELLED": ("worker", True),
     "INVALID_PLAN": ("validate_plan", True),
     "INVARIANT_FAILED": ("validate_invariants", True),
     "CAPABILITY_UNAVAILABLE": ("capability", False),
@@ -73,10 +80,55 @@ def structured_error(code: str, message: str, *, stage: Optional[str] = None,
     return payload
 
 
+class PhaseTimer:
+    """Wall-clock time per named phase of one operation; phases may repeat."""
+
+    def __init__(self, report=None):
+        self.phases: Dict[str, float] = {}
+        self._name = None
+        self._at = None
+        self._report = report
+        self._origin = time.perf_counter()
+
+    def start(self, name: str):
+        self.stop()
+        self._name, self._at = name, time.perf_counter()
+        if self._report is not None:
+            try:
+                self._report(name)
+            except Exception:
+                pass  # Stage telemetry must never fail the operation.
+
+    def stop(self):
+        if self._name is not None:
+            self.phases[self._name] = (self.phases.get(self._name, 0.) +
+                                       time.perf_counter() - self._at)
+            self._name = None
+
+    def add(self, name: str, seconds: float):
+        self.phases[name] = self.phases.get(name, 0.) + seconds
+
+    def result(self) -> Dict[str, int]:
+        self.stop()
+        timings = {name: round(value * 1000) for name, value in self.phases.items()}
+        timings['total'] = round((time.perf_counter() - self._origin) * 1000)
+        return timings
+
+
+def phase(timer, name):
+    """Mark a phase on an optional timer; services stay usable without one."""
+    if timer is not None:
+        timer.start(name)
+
+
 def error_result(owner, code: str, message: str, **kwargs) -> Dict[str, Any]:
     data = dict(kwargs.pop("data", {}) or {})
     data["error"] = structured_error(code, message, **kwargs)
-    return owner._result(False, message, SwErrors.swUnknownError, data)
+    result = owner._result(False, message, SwErrors.swUnknownError, data)
+    if code in {'PROGRAM_LIMIT', 'DRAFT_COMPLEXITY_LIMIT', 'NATIVE_BOOLEAN_FAILED',
+                'NATIVE_BOOLEAN_DISCONNECTED', 'RPC_CONNECTION_LOST', 'TESSELLATION_READ_FAILED'}:
+        result['error_name'] = code
+    return result
 
 
 def enrich_legacy_error(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -145,6 +197,9 @@ class RuntimeState:
             "cad_result_files": 0,
         }
         self.per_tool = {}
+        self.progress = None
+        self.current_com_call = None
+        self.last_com_call = None
 
     def observe_com(self, operation, member):
         with self._lock:
@@ -165,6 +220,9 @@ class RuntimeState:
                 ).encode("utf-8")).hexdigest(),
             }
             self.active_operation = copy.deepcopy(token)
+            self.progress = None
+            self.current_com_call = None
+            self.last_com_call = None
             return token
 
     def finish_tool(self, token, success: bool, snapshot=None):
@@ -199,6 +257,46 @@ class RuntimeState:
         with self._lock:
             self.metrics[name] = self.metrics.get(name, 0) + amount
             self.last_progress_at = time.time()
+
+    def record_progress(self, stage: str, **details):
+        """Publish bounded stage telemetry for one long-running operation."""
+        with self._lock:
+            now = time.time()
+            self.progress = update_progress(self.progress, {"stage": str(stage), **details}, now)
+            event = progress_snapshot(self.progress, now)
+            self.last_progress_at = now
+            if self.active_operation is not None:
+                events = self.active_operation.setdefault(
+                    "progress_events", [])
+                events.append(copy.deepcopy(event))
+                del events[:-64]
+                self.active_operation["progress"] = copy.deepcopy(event)
+            sink = getattr(self, "progress_sink", None)
+        if sink is not None:
+            try:
+                sink(copy.deepcopy(event))
+            except Exception:
+                pass  # Stage telemetry must never fail the operation.
+        return copy.deepcopy(event)
+
+    def begin_com_read(self, member, index=None):
+        """Track a reader call without invoking COM from status threads."""
+        with self._lock:
+            self.current_com_call = {'method': member, 'index': index, 'started_at': time.time()}
+
+    def end_com_read(self, elapsed_sec, hresult=None):
+        with self._lock:
+            self.last_com_call = {**(self.current_com_call or {}), 'finished_at': time.time(),
+                                  'elapsed_sec': elapsed_sec, 'com_hresult': hresult}
+            self.current_com_call = None
+
+    def reader_snapshot(self):
+        with self._lock:
+            current = copy.deepcopy(self.current_com_call)
+            if current:
+                current['elapsed_sec'] = round(time.time() - current['started_at'], 6)
+            return {'current_com_call': current, 'last_com_call': copy.deepcopy(self.last_com_call),
+                    'progress': progress_snapshot(self.progress)}
 
     def register_entities(self, document_key, sketch_name, entity_records):
         with self._lock:
@@ -242,6 +340,7 @@ class RuntimeState:
                 "active_operation": copy.deepcopy(self.active_operation),
                 "active_transaction_id": self.active_transaction_id,
                 "per_tool": copy.deepcopy(self.per_tool),
+                **self.reader_snapshot(),
             })
             return metrics
 

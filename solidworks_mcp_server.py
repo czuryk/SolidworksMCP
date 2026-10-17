@@ -5,7 +5,7 @@ SolidworksMCP - Entry Point
 ------------------------------------
 Run this file to start the MCP server.
 
-Version: 6.5.31
+Version: 6.22.0
 Author: Samsaam Ali Baig
 
 Usage:

@@ -35,9 +35,17 @@ def run(config_path):
     started_at = time.time()
     last_clear_check = started_at
     ready_written = False
+    ready_main_hwnd = None
+    owner_handle = None
+    if config.get('owner_pid'):
+        import win32api
+        import win32event
+        owner_handle = win32api.OpenProcess(0x00100000, False, int(config['owner_pid']))
 
     while True:
         if Path(config["stop_path"]).exists():
+            return 0
+        if owner_handle is not None and win32event.WaitForSingleObject(owner_handle, 0) == 0:
             return 0
         now = time.time()
         if now - started_at > max_runtime:
@@ -56,6 +64,7 @@ def run(config_path):
         if not fast_ui.get("modal"):
             last_clear_check = time.time()
             if not ready_written:
+                ready_main_hwnd = fast_ui.get('main_window_hwnd')
                 atomic_json_write(config["ready_path"], {
                     "ready": True,
                     "checked_at": last_clear_check,
@@ -93,6 +102,13 @@ def run(config_path):
         expected_method = caused_by.get("com_method")
         causal_match = (not expected_method or
                         com_state.get("com_method") == expected_method)
+        if config.get('require_active_cause'):
+            causal_match = bool(ready_written and expected_method and
+                ready_main_hwnd and detailed_ui.get('main_window_hwnd') == ready_main_hwnd and
+                com_state.get('active') is True and
+                com_state.get('request_id') == config['job_id'] and
+                com_state.get('com_method') == expected_method and
+                started_at <= float(com_state.get('started_at',0)) <= detected_at)
         detected_within_ms = int(max(
             0.0, detected_at - last_clear_check) * 1000)
         causal_ms = None
@@ -111,8 +127,16 @@ def run(config_path):
                 screenshot = capture_ui_problem_screenshot(
                     detailed_ui, config["job_id"],
                     config.get("screenshot_path"), defer_save=True)
-            resolution = resolve_known_dialog(
-                details[0], allowed, expected_text)
+            # Re-read immediately before acting: an earlier call marker must
+            # not authorize a later/manual dialog after return or cancellation.
+            latest = _read_json(config.get('com_state_path')) or {}
+            armed = not Path(config['stop_path']).exists()
+            if owner_handle is not None:
+                armed = armed and win32event.WaitForSingleObject(owner_handle, 0) != 0
+            if config.get('require_active_cause'):
+                armed = armed and latest == com_state and latest.get('active') is True
+            resolution = (resolve_known_dialog(details[0], allowed, expected_text)
+                          if armed else {'resolved':False,'reason':'causal_scope_ended'})
             recovered_at = time.time()
             if (screenshot and
                     screenshot.get("_deferred_image") is not None):

@@ -3,6 +3,7 @@ import json
 import math
 import os
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -28,7 +29,7 @@ from solidworks_mcp.server import (
     _dispatch_two_phase_sketches_comparison,
     _dispatch_two_phase_vector_commit,
     _dispatch_two_phase_sketch_comparison, _get_job_result,
-    _is_effectively_mutating, list_tools)
+    _is_effectively_mutating, _run_isolated_process, list_tools)
 
 
 class PropertyObject:
@@ -261,6 +262,7 @@ class FakeDisplayDimension:
 
 class FakeDoc:
     def __init__(self):
+        self.GetSaveFlag = False
         self.feature = FakeFeature()
         self.sketch = FakeSketch(self.feature)
         self.feature.sketch = self.sketch
@@ -345,6 +347,17 @@ class FakeAutomation(SolidWorksAutomation):
 
 
 class V6Tests(unittest.TestCase):
+    def setUp(self):
+        # Mock CAD jobs must not acquire the real interactive session's lease.
+        from solidworks_mcp.automation.session_lease import SessionLease
+        folder=tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        lease_path=Path(folder.name)/'mock-session.lock'
+        scope=patch('solidworks_mcp.automation.jobs.SessionLease',
+                    side_effect=lambda:SessionLease(lease_path))
+        scope.start()
+        self.addCleanup(scope.stop)
+
     def test_property_method_adapter_contract(self):
         self.assertEqual(com_get(PropertyObject(), "Value"), 42)
         self.assertEqual(com_get(MethodObject(), "Value", 3), 45)
@@ -447,6 +460,55 @@ class V6Tests(unittest.TestCase):
                       result["data"]["phase_timings_sec"])
         self.assertEqual(len(result["data"]["slowest_entities"]), 4)
 
+    def test_atomic_sketch_reactivates_created_feature_after_rebuild(self):
+        automation = FakeAutomation()
+
+        class ReopeningManager(FakeSketchManager):
+            def __init__(self, sketch):
+                super().__init__(sketch)
+                self.reopens = 0
+
+            def InsertSketch(self, update):
+                if self.ActiveSketch is None:
+                    self.ActiveSketch = automation.doc.sketch
+                    self.reopens += 1
+                else:
+                    self.ActiveSketch = None
+                return True
+
+        manager = ReopeningManager(automation.doc.sketch)
+        automation.doc.SketchManager = manager
+
+        def rebuild():
+            automation.doc.rebuilds += 1
+            manager.ActiveSketch = None
+            return True
+
+        automation.doc.EditRebuild3 = rebuild
+        result = automation.create_parametric_sketch(
+            name="Reactivated", plane="Front", unit="mm",
+            entities=[{"id": "line", "type": "line",
+                       "start": [0, 0], "end": [10, 0]}],
+            constraints=[], dimensions=[], equations=[], solve={},
+            validation={}, transaction={"rollback_on_failure": True})
+        self.assertTrue(result["success"], result)
+        self.assertEqual(manager.reopens, 1)
+        self.assertIs(manager.ActiveSketch, automation.doc.sketch)
+
+    def test_working_view_failure_is_not_classified_as_overdefined(self):
+        automation = FakeAutomation()
+        automation._ensure_sketch_active = lambda doc, feature: False
+        result = automation.create_parametric_sketch(
+            name="NoWorkingView", plane="Front", unit="mm",
+            entities=[{"id": "line", "type": "line",
+                       "start": [0, 0], "end": [10, 0]}],
+            constraints=[], dimensions=[], equations=[], solve={},
+            validation={}, transaction={"rollback_on_failure": False})
+        self.assertFalse(result["success"])
+        self.assertEqual(result["data"]["error"]["code"],
+                         "SKETCH_WORKING_VIEW_UNAVAILABLE")
+        self.assertEqual(result["data"]["error"]["stage"], "working_view")
+
     def test_atomic_sketch_accepts_dynamic_rebuild_property(self):
         automation = FakeAutomation()
         automation.doc.EditRebuild3 = True
@@ -480,13 +542,15 @@ class V6Tests(unittest.TestCase):
                 "id": "reference", "type": "line", "construction": True,
                 "start": [0, 0], "end": [10, 2],
             }], constraints=[], dimensions=[], equations=[],
-            solve={"mode": "construction_reference"},
+            solve={"mode": "construction_reference",
+                   "target": "fully_defined"},
             validation={"max_entities": 1},
             transaction={"rollback_on_failure": True},
             output_mode="construction_reference")
         self.assertTrue(result["success"], result)
         self.assertTrue(
             result["data"]["constraint_status_evaluation_skipped"])
+        self.assertTrue(result["data"]["solve_target_evaluation_skipped"])
         self.assertEqual(
             result["data"]["status"],
             "not_evaluated_construction_reference")
@@ -537,7 +601,9 @@ class V6Tests(unittest.TestCase):
                        "entity": "line", "value": 10 + i,
                        "unit": "mm", "text_position": [5, i]}
                       for i in range(50)]
-        result = automation.add_dimensions_batch("Dims", dimensions)
+        with patch('solidworks_mcp.automation.com_utils.detect_modal_dialog',
+                   return_value={'modal': False}):
+            result = automation.add_dimensions_batch("Dims", dimensions)
         self.assertTrue(result["success"], result)
         self.assertEqual(result["data"]["rebuild_count"], 1)
         self.assertEqual(len(result["data"]["dimensions"]), 50)
@@ -553,6 +619,13 @@ class V6Tests(unittest.TestCase):
         runtime = RuntimeState()
         runtime.idempotent_put("key", {"success": True})
         self.assertTrue(runtime.idempotent_get("key")["success"])
+        token = runtime.begin_tool("export_bundle", {}, {})
+        runtime.record_progress("step_export_verified", solid_body_count=4)
+        active = runtime.report()["active_operation"]
+        self.assertEqual(active["progress"]["stage"],
+                         "step_export_verified")
+        self.assertEqual(active["progress"]["solid_body_count"], 4)
+        runtime.finish_tool(token, True, {})
         violation = runtime.budget_violation({"max_rebuilds_per_sketch": 1},
                                              rebuilds=2)
         self.assertEqual(violation["limit"], "max_rebuilds_per_sketch")
@@ -1135,39 +1208,11 @@ class V6Tests(unittest.TestCase):
 
     def test_body_reference_dispatch_exports_native_mesh_and_restores_visibility(self):
         automation = SolidWorksAutomation()
+        automation.get_active_doc = lambda: (_ for _ in ()).throw(
+            AssertionError("Parent MCP process must not enter body COM"))
 
-        class Body:
-            def __init__(self, name, visible):
-                self.Name = name
-                self.Visible = visible
-
-            def HideBody(self, hidden):
-                self.Visible = not hidden
-
-        body_a = Body("Housing", True)
-        body_b = Body("Insert", False)
-
-        class Document:
-            def GetBodies2(self, body_type, visible_only):
-                return [body_a, body_b]
-
-            def GraphicsRedraw2(self):
-                return True
-
-        automation.get_active_doc = lambda: (Document(), None)
-        screenshot_states = []
-
-        def take_screenshot(path, **kwargs):
-            screenshot_states.append((body_a.Visible, body_b.Visible, kwargs))
-            return automation._result(
-                True, "shot", data={"path": path, "frame_unreadable": False})
-
-        automation.take_screenshot = take_screenshot
-        automation._export_body_stl = lambda doc, body, path, settings: Path(
-            path).write_bytes(b"temporary native mesh")
-        automation._inspect_stl = lambda path: {"triangles": 2}
-
-        def worker_side_effect(instance, name, worker_arguments):
+        def worker_side_effect(instance, name, worker_arguments,
+                               cancel_event=None):
             self.assertEqual(name, "compare_body_silhouette_to_image")
             self.assertEqual(worker_arguments["candidate_source"], "native_mesh")
             self.assertEqual(worker_arguments["bodies"], ["Housing"])
@@ -1175,24 +1220,86 @@ class V6Tests(unittest.TestCase):
             return {"success": True, "message": "PASS", "error_code": 0,
                     "error_name": "swSuccess", "data": {"pass": True}}
 
-        with patch("solidworks_mcp.server._dispatch_offline_worker",
-                   side_effect=worker_side_effect):
-            result = _dispatch_two_phase_body_comparison(automation, {
-                "reference_image": "reference.png",
-                "screenshot_path": "candidate.png",
-                "orientation": "front", "bodies": ["Housing"],
-                "budget": {"max_elapsed_sec": 30},
-            })
+        with tempfile.TemporaryDirectory() as directory:
+            screenshot = os.path.join(directory, "candidate.png")
+
+            def capture_side_effect(command, **kwargs):
+                request_path, response_path = command[-2:]
+                request = json.loads(Path(request_path).read_text(
+                    encoding="utf-8"))
+                mesh_path = os.path.join(
+                    request["mesh_directory"], "body-000.stl")
+                Path(mesh_path).write_bytes(b"temporary native mesh")
+                diagnostic = {
+                    "last_completed_stage": "native_capture_complete",
+                    "triangle_count": 2,
+                    "body_triangles": {"Housing": 2},
+                    "visibility_restored": True,
+                }
+                Path(request["diagnostic_path"]).write_text(
+                    json.dumps(diagnostic), encoding="utf-8")
+                Path(response_path).write_text(json.dumps({
+                    "success": True, "message": "captured",
+                    "error_code": 0, "error_name": "swSuccess",
+                    "data": {
+                        "screenshot_data": {
+                            "path": screenshot, "frame_unreadable": False,
+                            "visibility_isolation": {"restored": True}},
+                        "mesh_paths": [mesh_path],
+                        "mesh_settings": {"body_names": ["Housing"]},
+                        "body_names": ["Housing"],
+                    },
+                }), encoding="utf-8")
+                return {"return_code": 0, "stdout": "", "stderr": "",
+                        "cancelled": False, "timed_out": False,
+                        "elapsed_sec": 0.01}
+
+            with patch("solidworks_mcp.server._run_isolated_process",
+                       side_effect=capture_side_effect), patch(
+                       "solidworks_mcp.server._dispatch_offline_worker",
+                       side_effect=worker_side_effect):
+                result = _dispatch_two_phase_body_comparison(automation, {
+                    "reference_image": "reference.png",
+                    "screenshot_path": screenshot,
+                    "orientation": "front", "bodies": ["Housing"],
+                    "budget": {"max_elapsed_sec": 30},
+                })
 
         self.assertTrue(result["success"], result)
-        self.assertEqual(screenshot_states[0][:2], (True, False))
-        self.assertTrue(body_a.Visible)
-        self.assertFalse(body_b.Visible)
         boundary = result["data"]["execution_boundary"]
-        self.assertEqual(
-            boundary["com_process"],
-            "orthographic_screenshot_and_native_stl_export")
+        self.assertEqual(boundary["com_process"], "none")
         self.assertFalse(boundary["native_image_libraries_in_com"])
+        self.assertEqual(result["data"]["native_capture"]["triangle_count"], 2)
+
+    def test_isolated_process_cancellation_kills_child_promptly(self):
+        cancelled = threading.Event()
+        timer = threading.Timer(0.15, cancelled.set)
+        timer.start()
+        try:
+            result = _run_isolated_process(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout=30, cwd=os.getcwd(), cancel_event=cancelled)
+        finally:
+            timer.cancel()
+        self.assertTrue(result["cancelled"], result)
+        self.assertLess(result["elapsed_sec"], 2.0)
+
+    def test_body_capture_diagnostic_preserves_last_completed_stage(self):
+        from solidworks_mcp.body_capture_worker import _update_diagnostic
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "capture.json")
+            state = {"triangle_count": 42, "last_completed_stage": None}
+            _update_diagnostic(path, state, "visibility_restored")
+            _update_diagnostic(path, state, "native_mesh_export_started",
+                               active_body="Main")
+            _update_diagnostic(path, state, "worker_failed", error="timeout")
+            persisted = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertEqual(persisted["last_completed_stage"],
+                         "visibility_restored")
+        self.assertEqual(persisted["failed_stage"],
+                         "native_mesh_export_started")
+        self.assertEqual(persisted["triangle_count"], 42)
 
     def test_body_reference_dispatch_classifies_invalid_mesh_plan_before_com(self):
         automation = SolidWorksAutomation()
@@ -1468,6 +1575,7 @@ class V6Tests(unittest.TestCase):
 
     def test_commit_vector_analysis_validates_then_uses_cad_only(self):
         automation = SolidWorksAutomation()
+        automation._checkpointed_vector_commit = lambda name, operation, rollback: operation()
         with tempfile.TemporaryDirectory() as directory:
             vector_path = os.path.join(directory, "candidate.vector.json")
             payload = {
@@ -1508,6 +1616,7 @@ class V6Tests(unittest.TestCase):
 
     def test_construction_commit_uses_one_batched_nurbs_transport(self):
         automation = SolidWorksAutomation()
+        automation._checkpointed_vector_commit = lambda name, operation, rollback: operation()
         with tempfile.TemporaryDirectory() as directory:
             vector_path = os.path.join(directory, "construction.vector.json")
             payload = {
@@ -1563,6 +1672,9 @@ class V6Tests(unittest.TestCase):
 
     def test_post_commit_cad_validation_failure_rolls_back(self):
         automation = SolidWorksAutomation()
+        # The native file checkpoint is covered separately. Local deletion alone
+        # must never claim complete document restoration.
+        automation._checkpointed_vector_commit = lambda name, operation, rollback: operation()
         with tempfile.TemporaryDirectory() as directory:
             vector_path = os.path.join(directory, "candidate.vector.json")
             payload = {
@@ -1599,7 +1711,7 @@ class V6Tests(unittest.TestCase):
                 idempotency_key="post-cad-fail")
             self.assertFalse(result["success"])
             self.assertFalse(result["data"]["error"]["details"]["committed"])
-            self.assertTrue(result["data"]["error"]["document_restored"])
+            self.assertFalse(result["data"]["error"]["document_restored"])
             self.assertIsNone(automation._runtime.idempotent_get(
                 "post-cad-fail"))
 
@@ -1984,7 +2096,8 @@ class V6Tests(unittest.TestCase):
                 self.assertIn(job.error, result["message"])
 
     def test_tool_schemas_are_unique_and_augmented(self):
-        tools = asyncio.run(list_tools())
+        with patch.dict(os.environ, {'SOLIDWORKS_MCP_TOOL_PROFILE':'expert'}):
+            tools = asyncio.run(list_tools())
         names = [tool.name for tool in tools]
         self.assertEqual(len(names), len(set(names)))
         self.assertGreaterEqual(len(names), 82)
@@ -2255,6 +2368,38 @@ class V6Tests(unittest.TestCase):
         self.assertTrue(report["cuda"])
         self.assertEqual(report["torch_cuda_build"], "12.4")
         self.assertEqual(report["device"], "NVIDIA Test GPU")
+
+    def test_lineart_consensus_reports_band_and_centerline_agreement(self):
+        import numpy as np
+        from solidworks_mcp.automation import lineart_vectorization
+
+        image = np.zeros((80, 80, 3), dtype=np.uint8)
+        dexined = np.zeros((80, 80), dtype=float)
+        teed = np.zeros((80, 80), dtype=float)
+        dexined[10:70, 10:51] = 0.9
+        teed[10:70, 20:61] = 0.9
+        bundle = {
+            "models": {"dexined": object(), "teed": object()},
+            "capability": {"models": {
+                "dexined": {"sha256_verified": True},
+                "teed": {"sha256_verified": True},
+            }},
+        }
+
+        def infer(rgb, model_name, loaded):
+            return dexined if model_name == "dexined" else teed
+
+        with patch.object(lineart_vectorization, "_infer",
+                          side_effect=infer):
+            consensus, report = lineart_vectorization._model_consensus(
+                image, {"line_probability_threshold": 0.5,
+                        "consensus_radius_px": 2.0}, bundle)
+        self.assertTrue(consensus.any())
+        self.assertGreater(report["balanced_support"], 0.95)
+        self.assertLess(report["centerline_dexined_support"], 0.1)
+        self.assertLess(report["centerline_teed_support"], 0.1)
+        self.assertTrue(report["both_verified_checkpoints_loaded"])
+        self.assertGreater(report["band_pixels"]["mutually_supported"], 0)
 
     def test_topology_validation_allows_declared_open_line_art_paths(self):
         automation = SolidWorksAutomation()
@@ -2796,6 +2941,31 @@ class V6Tests(unittest.TestCase):
         self.assertEqual(entities[0]["type"], "b_spline")
         self.assertEqual(entities[0]["curve_strategy"], "hybrid_primitives")
         self.assertEqual(error, 0.1)
+
+    def test_closed_silhouette_splits_at_curvature_under_per_entity_cap(self):
+        import numpy as np
+
+        automation = SolidWorksAutomation()
+        angles = np.linspace(0, 2 * math.pi, 180, endpoint=False)
+        radius = 1.0 + 0.08 * np.cos(5 * angles)
+        points = np.column_stack([
+            50 * radius * np.cos(angles),
+            70 * radius * np.sin(angles),
+        ])
+        entities, report = automation._fit_curvature_split_closed_bspline(
+            points, 0.2, 8, {
+                "explicit_spline_tolerance_mm": 0.16,
+                "max_control_points_per_spline": 64,
+                "max_total_control_points": 384,
+            })
+        self.assertIsNotNone(entities, report)
+        self.assertEqual(report["reason"], "accepted_curvature_split")
+        self.assertGreaterEqual(len(entities), 2)
+        self.assertLessEqual(max(
+            len(entity["control_points"]) for entity in entities), 64)
+        self.assertLessEqual(report["global_fit_error_mm"], 0.2)
+        self.assertTrue(all("curvature_split" in entity
+                            for entity in entities))
 
     def test_construction_reference_has_no_topology_relations(self):
         automation = SolidWorksAutomation()
@@ -3538,7 +3708,14 @@ class V6Tests(unittest.TestCase):
         automation._feature_names = lambda doc: [
             feature.Name for feature in doc.features]
         automation._feature_bbox = lambda feature, unit: {
-            "min": [0, 0, 0], "max": [1, 1, 1]}
+            "min": [-50, -50, -5], "max": [50, 50, 5]}
+        automation._feature_bbox_m = lambda feature: (
+            [-0.05, -0.05, -0.005], [0.05, 0.05, 0.005])
+        automation._sketch_profile_region_m = lambda doc, name: {
+            "bbox_m": ([0.010, 0.002, 0.0], [0.020, 0.004, 0.0]),
+            "normal": [0.0, 0.0, 1.0],
+            "source": "selected_sketch_profile",
+        }
         with patch(
                 "solidworks_mcp.automation.advanced_features.typed",
                 return_value=document.FeatureManager), patch(
@@ -3548,6 +3725,8 @@ class V6Tests(unittest.TestCase):
                 sketch_name="Pocket_Profile",
                 end_condition="through_all_both",
                 scope_bodies=["Host"], feature_name="Pocket",
+                expected_bbox={"min": [9, 1, -6],
+                               "max": [21, 5, 6], "tolerance": 0.0},
                 unit="mm")
         self.assertTrue(result["success"], result)
         self.assertEqual(document.current_body.Name, "Host")
@@ -3563,6 +3742,12 @@ class V6Tests(unittest.TestCase):
             "rename_warning": None,
         }])
         self.assertTrue(result["data"]["double_ended"])
+        self.assertEqual(result["data"]["expected_bbox_guard_source"],
+                         "newly_affected_region_bbox")
+        self.assertEqual(result["data"]["newly_affected_region_bbox"]["min"],
+                         [10.0, 2.0, -5.0])
+        self.assertEqual(result["data"]["connected_result_face_bbox"]["min"],
+                         [-50, -50, -5])
         self.assertFalse(cut_arguments[0][0])
         self.assertEqual(
             cut_arguments[0][3],
@@ -4002,6 +4187,7 @@ class V6Tests(unittest.TestCase):
 
     def test_native_body_tessellation_writes_verified_binary_and_ascii_stl(self):
         automation = SolidWorksAutomation()
+        automation._sw_app = type("App", (), {"CommandInProgress": False})()
         vertices = {
             0: (-0.005, -0.005, -0.005),
             1: (0.005, -0.005, -0.005),
@@ -4021,12 +4207,16 @@ class V6Tests(unittest.TestCase):
         class Tessellation:
             def __init__(self):
                 self.fins = {}
+                self.point_reads = []
+                self.normal_reads = []
                 for facet_id, (a, b, c) in enumerate(facets):
                     self.fins[facet_id * 3] = (a, b)
                     self.fins[facet_id * 3 + 1] = (b, c)
                     self.fins[facet_id * 3 + 2] = (c, a)
 
             def Tessellate(self):
+                if not automation._sw_app.CommandInProgress:
+                    raise AssertionError("Tessellation must use a command scope")
                 return True
 
             def GetFacetCount(self):
@@ -4039,9 +4229,11 @@ class V6Tests(unittest.TestCase):
                 return self.fins[fin_id]
 
             def GetVertexPoint(self, vertex_id):
+                self.point_reads.append(vertex_id)
                 return vertices[vertex_id]
 
             def GetVertexNormal(self, vertex_id):
+                self.normal_reads.append(vertex_id)
                 return (0.0, 0.0, 1.0)
 
         tessellation = Tessellation()
@@ -4055,6 +4247,8 @@ class V6Tests(unittest.TestCase):
 
         body = Body()
         with tempfile.TemporaryDirectory() as directory, patch(
+                "solidworks_mcp.automation.com_utils.typed",
+                side_effect=lambda value, interface: value), patch(
                 "solidworks_mcp.automation.high_level.typed",
                 side_effect=lambda value, interface: value):
             binary_path = os.path.join(directory, "cube-binary.stl")
@@ -4067,6 +4261,11 @@ class V6Tests(unittest.TestCase):
             self.assertEqual(export["backend"],
                              "solidworks_itessellation")
             self.assertEqual(binary["triangles"], 12)
+            self.assertCountEqual(tessellation.point_reads, vertices)
+            self.assertCountEqual(tessellation.normal_reads, vertices)
+            self.assertEqual(export["tessellation"]["unique_vertex_reads"], 8)
+            self.assertEqual(export["tessellation"]["unique_normal_reads"], 8)
+            self.assertFalse(automation._sw_app.CommandInProgress)
             for actual, expected in zip(binary["bbox"]["min"], [-5, -5, -5]):
                 self.assertAlmostEqual(actual, expected, places=5)
             for actual, expected in zip(binary["bbox"]["max"], [5, 5, 5]):
@@ -4083,6 +4282,8 @@ class V6Tests(unittest.TestCase):
                 object(), body, ascii_path, ascii_settings)
             ascii_mesh = automation._inspect_stl(ascii_path)
             self.assertEqual(ascii_mesh["triangles"], 12)
+            self.assertEqual(len(tessellation.point_reads), 16)
+            self.assertEqual(len(tessellation.normal_reads), 16)
             for actual in ascii_mesh["bbox"]["min"]:
                 self.assertAlmostEqual(actual, 0.0, places=5)
 
@@ -4091,6 +4292,11 @@ class V6Tests(unittest.TestCase):
                 automation._export_body_stl(
                     object(), body, os.path.join(directory, "limited.stl"),
                     limited)
+            self.assertFalse(automation._sw_app.CommandInProgress)
+            automation._sw_app.CommandInProgress = True
+            with self.assertRaisesRegex(RuntimeError, "max_triangles=11"):
+                automation._tessellate_body(body, limited)
+            self.assertTrue(automation._sw_app.CommandInProgress)
 
     def test_stl_bbox_verification_handles_explicit_translation_only(self):
         body = {"bbox": {"min": [-5.0, 2.0, 1.0],
@@ -4309,7 +4515,8 @@ class V6Tests(unittest.TestCase):
 
     @staticmethod
     def _normal_to_fixture(view_matrix=None, native_matrix=None,
-                           points=None, pixel_scale=1000.0):
+                           points=None, pixel_scale=1000.0,
+                           screen_origin=(0.0, 0.0)):
         identity = [1.0, 0.0, 0.0,
                     0.0, 1.0, 0.0,
                     0.0, 0.0, 1.0,
@@ -4369,7 +4576,9 @@ class V6Tests(unittest.TestCase):
                     1.0, 0.0, 0.0,
                     0.0, 1.0, 0.0,
                     0.0, 0.0, 1.0,
-                    500.0, 400.0, 0.0, self.Scale2, 0.0, 0.0, 0.0])
+                    500.0 + screen_origin[0],
+                    400.0 + screen_origin[1],
+                    0.0, self.Scale2, 0.0, 0.0, 0.0])
 
             def Update(self):
                 return True
@@ -4412,6 +4621,12 @@ class V6Tests(unittest.TestCase):
 
         automation = SolidWorksAutomation()
         automation._sw_app = Application()
+        if screen_origin != (0.0, 0.0):
+            automation._fit_viewport_screen_rect = lambda view: [
+                screen_origin[0], screen_origin[1],
+                screen_origin[0] + view.FrameWidth,
+                screen_origin[1] + view.FrameHeight,
+            ]
         return automation, document, identity, Transform
 
     def test_normal_to_is_noop_when_already_verified(self):
@@ -4510,6 +4725,18 @@ class V6Tests(unittest.TestCase):
         self.assertGreaterEqual(
             result["actual"]["dominant_fill_ratio"], 0.35)
         self.assertLessEqual(result["actual"]["dominant_fill_ratio"], 0.90)
+
+    def test_fit_measurement_normalizes_physical_screen_coordinates(self):
+        points = [(-0.05, -0.025, 0.0), (0.05, 0.025, 0.0),
+                  (-0.05, 0.025, 0.0), (0.05, -0.025, 0.0)]
+        automation, document, _, _ = self._normal_to_fixture(
+            points=points, pixel_scale=4000.0,
+            screen_origin=(1800.0, 600.0))
+        measurement = automation._fit_measurement(document, points)
+        self.assertTrue(measurement["verified"], measurement)
+        self.assertEqual(measurement["coordinate_space"], "physical_screen")
+        self.assertEqual(measurement["frame_origin_screen_px"],
+                         [1800.0, 600.0])
 
     def test_fit_to_screen_is_invoked_even_when_initial_frame_is_valid(self):
         points = [(-0.05, -0.025, 0.0), (0.05, 0.025, 0.0),

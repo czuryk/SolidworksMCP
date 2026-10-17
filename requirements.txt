@@ -22,6 +22,7 @@ opencv-python-headless>=4.10
 scikit-image>=0.22
 shapely>=2.0
 Pillow>=10.2
+sympy>=1.13,<2
 
 # Verified deep silhouette vectorization backend.  A CUDA build of PyTorch is
 # required; get_capabilities reports the active GPU and cached model state.

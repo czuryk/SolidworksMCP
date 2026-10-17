@@ -3,11 +3,11 @@ SolidworksMCP Package
 ----------------------
 Model Context Protocol server for SolidWorks automation.
 
-Version: 6.5.31
+Version: 6.30.0rc1
 Author: Samsaam Ali Baig
 """
 
-__version__ = "6.5.31"
+__version__ = "6.30.0rc1"
 __author__ = "Samsaam Ali Baig"
 
 from .automation import SolidWorksAutomation

@@ -162,9 +162,8 @@ class SolidWorksAutomation:
                 "MODAL_DIALOG_BLOCKING",
                 f"SolidWorks UI is blocked before '{tool_name}'",
                 stage="preflight", recoverable=True,
-                recommended_actions=[
-                    "Resolve the reported dialog, or call an explicitly "
-                    "whitelisted UI recovery operation."],
+                likely_causes=[
+                    "A SolidWorks dialog is open: " + ", ".join(ui.get("dialogs") or ["main window disabled"])],
                 details={"ui": ui, "caused_by": {
                     "tool": tool_name,
                     "transaction_id": self._runtime.active_transaction_id}})

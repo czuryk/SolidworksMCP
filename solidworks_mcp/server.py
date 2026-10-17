@@ -3,12 +3,40 @@ SolidworksMCP
 ---------------------
 Main MCP server entry point with all tools.
 
-Version: 6.5.31 (SolidWorks 2025/2026)
+Version: 6.22.0 (SolidWorks 2025/2026)
 Live-tested on SW2026 SP2.1: transparency/colour fix confirmed; verified
 constants SWBODYINTERSECT=15901/SWBODYADD=15903; CreateMeasure and the
 Section View API are typed-only (FirstOffset/FirstReverseDirection,
 CreateSectionView/RemoveSectionView).
 Author: Samsaam Ali Baig
+
+New in v6.22.0: valid trace geometry, shared native endpoints, verified raster rollback and preloaded verification runtime.
+Previous: conditioned native curve expressions and persistent path-direction recovery.
+Prior v6.14.0: compact tools, native inspection and validated model delivery.
+Prior v6.13.0: durable request receipts, shared-owner UI watchdog and native file rollback.
+Prior v6.8.0: extended native shapes, explicit Boolean dependencies, indexed feature lookup.
+Prior v6.7.0 (native parameters and same-topology editing):
+- Native global-variable bindings, dependent paths/frames, embedded persistent
+  mappings, revision-checked definition edits and file-checkpoint rollback.
+- Simplified bounded native equations and feature warning validation.
+
+New in v6.6.0 (first shape-program batch):
+- Python shape programs compile to native elliptical Loft, spatial circular
+  Sweep, spherical-cap/Profile Revolve, and body Mirror in new documents.
+- Shape tools return structured results plus inline model images.
+- Cross-process writer exclusion, strict shape schemas, corrected ellipse
+  coordinates and body Mirror marks.
+
+New in v6.5.32:
+- Parametric sketch creation reactivates the created feature after rebuild;
+  working-view failures have dedicated structured error codes. Pixel-fit
+  read-back normalizes physical desktop coordinates for newly tiled MDI views.
+- Line-art consensus reports probability-band and centerline diagnostics, and
+  oversized closed silhouettes can split into bounded curvature-seam NURBS.
+- Native body capture/tessellation runs in a timeout- and cancellation-aware
+  child process with durable stage/triangle diagnostics.
+- Scoped cuts expose requested affected-region and connected-face bboxes;
+  audited export bundles publish stage progress events.
 
 New in v6.5.31:
 - Active 2D sketches now use a read-back-verified Normal To state machine:
@@ -344,7 +372,10 @@ sketch_contour, screenshots, async execution.
 """
 
 import io
+import base64
+import asyncio
 import os
+import numpy as np  # Load the native runtime before any STA connection to SolidWorks.
 import sys
 import json
 import copy
@@ -352,6 +383,7 @@ import logging
 import subprocess
 import traceback
 import tempfile
+import threading
 import time
 from typing import Dict
 from pathlib import Path
@@ -359,10 +391,11 @@ from pathlib import Path
 # MCP imports
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, ImageContent, CallToolResult, JSONRPCMessage, JSONRPCResponse
 
 # Local imports
 from .automation import SolidWorksAutomation
+from . import __version__
 from .automation.jobs import JobManager
 from .automation.com_utils import (com_get, typed, select_by_id2,
                                    select_by_ray, get_modeler,
@@ -374,6 +407,18 @@ from .tool_registry import (NEW_TOOLS, NEW_TOOL_NAMES, MUTATING_TOOLS,
                             FIRST_GEOMETRY_TOOLS, augment_tool_schemas,
                             dispatch_new_tool)
 from .automation.runtime import enrich_legacy_error
+from .shape_tools import SHAPE_TOOL_NAMES
+from .automation.shape_service import SHAPE_INSTRUCTIONS
+from .automation.session_lease import SessionLease, SessionBusy, SessionQuarantined
+from .automation.sta_executor import StaExecutor, failure, sync_wait_limit
+from .automation.request_execution import execute_request, request_spec
+from .automation.request_journal import RequestConflict, RequestJournal
+from .automation.sta_watchdog import StaWatchdog, validate_policy
+from .error_actions import attach_recovery
+from .build_info import server_state
+from .automation.session_identity import solidworks_memory, process_snapshot
+from .session_trace import SessionTrace, session_report
+from .automation.runtime import default_state_dir
 
 # Configure logging
 config = get_config()
@@ -413,16 +458,25 @@ logger = logging.getLogger("SolidworksMCP")
 # ============================================================================
 
 sw_automation = SolidWorksAutomation()
-job_manager = JobManager()
-server = Server("SolidworksMCP")
+job_manager = JobManager()  # Legacy diagnostic helpers only; MCP jobs use the STA owner.
+cad_executor = StaExecutor()
+# One tool call never blocks longer than this; the operation itself keeps running.
+SYNC_WAIT_SEC = sync_wait_limit()
+# Long operations publish their phase for RUNNING answers; resolved late for test patching.
+sw_automation._runtime.progress_sink = lambda stage: cad_executor.report_stage(stage)
+# One JSON line per tool call (sizes and outcomes only); SOLIDWORKS_MCP_TRACE=0 keeps it in memory.
+session_trace = SessionTrace(None if os.environ.get('SOLIDWORKS_MCP_TRACE') == '0'
+                             else default_state_dir() / 'sessions')
+# Mutations record their checkpoint in the session journal for recovery.
+sw_automation._runtime.journal_sink = lambda **facts: cad_executor.annotate(**facts)
+server = Server("SolidworksMCP", version=__version__, instructions=SHAPE_INSTRUCTIONS)
 
 
 # ============================================================================
 # Tool Definitions
 # ============================================================================
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
+def _all_tools() -> list[Tool]:
     """List all available SolidWorks tools"""
     tools = [
         # -------------------- Connection --------------------
@@ -458,7 +512,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="open_document",
-            description="Open an existing SolidWorks document.",
+            description="Open an existing SolidWorks document. Shape tools that take document_path open or activate that part themselves.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -469,8 +523,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="save_document",
-            description="Save the active document. Save3 handled with proper "
-                        "out-parameters (no Type mismatch on SW2026).",
+            description='Save the active document, optionally to an explicit path.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -481,10 +534,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="close_document",
-            description="Close the active document. RECOVERY: close_document("
-                        "save=false) then open_document reverts the model to the "
-                        "untouched on-disk copy (use after Freeze Bar / in-memory "
-                        "corruption).",
+            description='Close the active document; save=false discards unsaved changes. Reopen the saved file only when an intentional rollback is needed.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -495,8 +545,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_document_info",
-            description="Get info about the active document (title, type, "
-                        "path, feature/body counts). FIXED for SW2026.",
+            description='Read the active document title, type, path and feature/body counts. Use get_model_context for shape-program parameters and revision.',
             inputSchema={"type": "object", "properties": {}, "required": []}
         ),
         Tool(
@@ -537,10 +586,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="draw_line",
-            description="Draw a line in the ACTIVE sketch (sketch-local 2D coords, "
-                        "user units). For reference-accurate outlines in model "
-                        "coordinates use sketch_contour. Normal To and pixel-"
-                        "verified Fit to Screen are enforced before/after mutation.",
+            description='Draw in the active sketch using sketch-local 2D coordinates and user units. For model-space contours use sketch_contour. Automatically verifies Normal To and Fit.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -619,18 +665,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="sketch_contour",
-            description="Draw a CLOSED contour from exact MODEL coordinates (user "
-                        "units, mm default), transformed into the sketch CS via "
-                        "ModelToSketchTransform; AddToDB avoids inference snapping. "
-                        "Segment types: line, arc, centerline (revolve axis). "
-                        "Provide 'plane' or 'face_ray' to auto-create the sketch, "
-                        "or draw into the active one. Enforces geometrically "
-                        "verified Normal To and pixel-verified Fit to Screen. "
-                        "VALIDATES closure: returns closed_contours, "
-                        "open_endpoints, contour_bbox; errors immediately on an "
-                        "open or self-intersecting contour (wrong arc direction "
-                        "+-1) instead of failing later at the extrude. Pass "
-                        "close=false when intentionally drawing a partial chain.",
+            description='Draw model-space line/arc/centerline segments in a sketch; coordinates use user units. plane or face_ray creates the sketch. Checks closure and self-intersection; close=false permits an open chain. Automatically verifies Normal To and Fit.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -689,20 +724,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="advanced_extrude",
-            description="Full Boss-Extrude via typed IFeatureManager (auto-verifies "
-                        "via GetFaces and deletes dead 0-face features; Freeze Bar "
-                        "guard runs first). end_condition: blind, through_all, "
-                        "through_all_both, through_next, up_to_vertex, "
-                        "up_to_surface, mid_plane, offset_from_surface. "
-                        "start_condition: sketch_plane, surface, vertex, offset. "
-                        "depth = offset distance for offset_from_surface. "
-                        "merge=false makes a NEW body. Reference faces are picked by "
-                        "ray (ref_face_ray/start_face_ray) and must be on a VISIBLE "
-                        "body. Distances in user units (mm default). If the feature "
-                        "comes out dead/wrong-side, set auto_flags=true. Returns "
-                        "feature_bbox (WHERE the geometry landed - CHECK IT) and "
-                        "merged body names; guards: expected_bbox and "
-                        "expected_merge_bodies auto-rollback on violation.",
+            description='Create a verified Boss-Extrude with explicit start/end conditions. merge=false creates a separate body; ray references require visible faces. depth is the offset for offset_from_surface. expected_bbox/expected_merge_bodies guard placement; auto_flags resolves supported direction flags.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -736,17 +758,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="advanced_cut",
-            description="Full Cut-Extrude via typed IFeatureManager (same "
-                        "conditions as advanced_extrude; auto-verifies & deletes "
-                        "dead features). scope_bodies limits the cut to named "
-                        "bodies (Mark=8) - ESSENTIAL in multibody parts (an "
-                        "unscoped cut damages other bodies). NOTE: Cut flag "
-                        "semantics differ from Boss (Cut offset-from-surface "
-                        "usually needs direction_flip=True); set auto_flags=true if "
-                        "unsure. Distances in user units; ref faces must be VISIBLE. "
-                        "Returns feature_bbox (CHECK it - auto_flags can pick a "
-                        "live-but-wrong-side cut) and merged body names; guards: "
-                        "expected_bbox / expected_merge_bodies auto-rollback.",
+            description='Create a verified Cut-Extrude; scope_bodies confines multibody cuts. Ray references require visible faces; auto_flags resolves supported direction flags. expected_bbox guards the affected region and expected_merge_bodies guards scope. Distances use user units.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -771,7 +783,7 @@ async def list_tools() -> list[Tool]:
                     "auto_flags": {"type": "boolean", "default": False,
                                    "description": "Try flag combinations and pick the one that yields a live feature"},
                     "expected_bbox": {"type": "object",
-                                      "description": "Guard zone {'min':[x,y,z],'max':[x,y,z],'tolerance':0.5} in user units: feature outside the zone is rolled back with an error. Combine with auto_flags to find the combo landing in the right zone"},
+                                      "description": "Guard zone {'min':[x,y,z],'max':[x,y,z],'tolerance':0.5} in user units: a scoped cut checks the newly affected profile/sweep region instead of the full connected face grid; violation rolls back"},
                     "expected_merge_bodies": {"type": "array", "items": {"type": "string"},
                                               "description": "Bodies ALLOWED to be merged/swallowed; any other merged body rolls the feature back with an error"},
                     "unit": {"type": "string"}
@@ -784,7 +796,8 @@ async def list_tools() -> list[Tool]:
             description="Constant-radius fillet. Edges are picked by rays "
                         "(edge_rays, hit only VISIBLE bodies) or must be "
                         "pre-selected. Radius in user units (mm default). "
-                        "Auto-verifies (GetFaces) and deletes dead features.",
+                        "Auto-verifies (GetFaces) and deletes dead features. In a shape "
+                        "program use model.fillet: it belongs to the program and survives edits.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -803,7 +816,8 @@ async def list_tools() -> list[Tool]:
             name="chamfer_edges",
             description="Distance-angle chamfer. Edges picked by rays (edge_rays, "
                         "hit only VISIBLE bodies) or pre-selected. distance in user "
-                        "units, angle in degrees. Auto-verifies the result.",
+                        "units, angle in degrees. Auto-verifies the result. In a shape "
+                        "program use model.chamfer.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -901,7 +915,8 @@ async def list_tools() -> list[Tool]:
             description="Linear pattern of feature(s) along a direction (edge/axis "
                         "by ray or name). spacing in user units. NOTE: patterning a "
                         "lone base body (no cuts/bosses) does not materialize on "
-                        "SW2026 - pattern the cut/boss feature instead. Auto-verifies.",
+                        "SW2026 - pattern the cut/boss feature instead. Auto-verifies. "
+                        "In a shape program use model.pattern(count=, step=).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -926,7 +941,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="circular_pattern",
             description="Circular pattern of feature(s) about an axis (axis_entity "
-                        "name or axis_edge_ray). angle in degrees. Auto-verifies.",
+                        "name or axis_edge_ray). angle in degrees. Auto-verifies. "
+                        "In a shape program use model.pattern(count=, axis=, center=).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -948,7 +964,7 @@ async def list_tools() -> list[Tool]:
             name="mirror_feature",
             description="Mirror feature(s) or bodies about a plane/planar face "
                         "(mirror_plane name or mirror_face_ray). Provide "
-                        "seed_features OR mirror_bodies.",
+                        "seed_features OR mirror_bodies. In a shape program use model.mirror.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -967,7 +983,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="export_file",
             description="Export the active document by extension: STEP, STL, "
-                        "IGES, Parasolid (.x_t/.x_b), 3MF, SAT, WRL, PLY, etc.",
+                        "IGES, Parasolid (.x_t/.x_b), 3MF, SAT, WRL, PLY, etc. "
+                        "A shape model is delivered with export_model (checked SLDPRT, STEP, STL).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1012,9 +1029,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_feature_status",
-            description="Feature health: GetFaces count (0 = dead feature that "
-                        "SolidWorks created silently), suppressed state, type. "
-                        "Critical after feature operations.",
+            description='Read feature type, suppression and owned face count. Zero faces alone does not prove failure for reference geometry, transforms or consumed upstream features.',
             inputSchema={
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
@@ -1067,11 +1082,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="set_body_transparency",
-            description="Set ONLY body transparency (0.0 opaque .. 1.0 invisible), "
-                        "preserving colour. Write goes through a proper VARIANT "
-                        "array and is verified by read-back (raw writes corrupt "
-                        "appearance on SW2026 - black body). Useful for overlaying "
-                        "a result over a reference body.",
+            description='Set body transparency from 0 (opaque) to 1 (invisible), preserving colour; verified by read-back.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1083,10 +1094,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="set_body_color",
-            description="Set body colour (and optionally transparency) preserving "
-                        "other material properties. rgb=[r,g,b] as 0-255 (or 0-1 "
-                        "if all <=1). Verified VARIANT write. Use to repair a "
-                        "black body left by the old transparency bug.",
+            description='Set body colour, optionally transparency, preserving other material properties. rgb accepts 0-255 or 0-1 when all values are at most 1.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1101,10 +1109,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="body_volume",
-            description="Volume, surface area and centre of mass of one body (or "
-                        "all bodies if name omitted) via GetMassProperties. "
-                        "Instant sanity check that a part is not a sliver and "
-                        "that a feature did not unexpectedly change a body.",
+            description='Read native volume, surface area and centre of mass for one body, or all bodies if name is omitted.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1116,13 +1121,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="check_clearance",
-            description="Clearance / interference between two bodies: minimum "
-                        "distance (IMeasure) + intersection volume & bbox (temp "
-                        "copies + Operations2 SWBODYINTERSECT). ESSENTIAL for "
-                        "print-in-place multibody: SolidWorks allows separate "
-                        "bodies to overlap SILENTLY. Set min_clearance (e.g. 0.4 "
-                        "nozzle width) to make the tool fail when the gap is too "
-                        "small or bodies intersect.",
+            description='Measure two named bodies in user units; containment counts as overlap. min_clearance fails the check on insufficient gap or overlap. Use inspect_model(body_pairs) for batched revision-bound queries with lower/upper bounds.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1139,10 +1138,7 @@ async def list_tools() -> list[Tool]:
         # -------------------- Ray probing --------------------
         Tool(
             name="probe_ray",
-            description="Cast a ray, return the hit point (x,y,z) + body/entity "
-                        "name. The workhorse for reverse-engineering reference "
-                        "geometry. Coords/radius in user units (mm default). Hits "
-                        "only VISIBLE bodies - show_body the target, hide occluders.",
+            description='Return the first hit point and entity/body along a ray. Hits visible bodies only; hide occluders when needed. Coordinates and tolerance use user units.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1161,9 +1157,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="probe_rays",
-            description="Batch ray probing (many rays in one call) - for efficient "
-                        "reverse-engineering of edges/thicknesses/radii. Coords in "
-                        "user units; hits only VISIBLE bodies.",
+            description='Batch first-hit ray queries on visible bodies. Use for a specific location or section question; coordinates use user units.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1199,12 +1193,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="probe_section",
-            description="Section 'radar': cast a fan of rays inside the plane "
-                        "axis=value (axis x|y|z) from origin and get the r(theta) "
-                        "profile per body in ONE call - replaces dozens of manual "
-                        "probe_rays for 'who is where' section analysis. theta=0 "
-                        "along first in-plane axis (z->+X, x->+Y, y->+Z). Rays "
-                        "hit only VISIBLE bodies (first hit per ray).",
+            description='Sample visible bodies with a radial ray fan in axis=value (x/y/z). Returns the first hit per ray; theta=0 is +X for z, +Y for x, +Z for y. For body-scoped shape sections use inspect_model.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1229,14 +1218,7 @@ async def list_tools() -> list[Tool]:
         # -------------------- View / Screenshot --------------------
         Tool(
             name="take_screenshot",
-            description="Save a screenshot of the active document. Optional "
-                        "camera orientation (named or custom view_direction), "
-                        "zoom-to-fit or framing on bodies/bbox (zoom_to_bodies/"
-                        "zoom_bbox). Detects black, solid-fill, and background-"
-                        "gradient-only frames from central model-edge content; "
-                        "a blank SaveAs3 export is replaced by a DPI-correct "
-                        "on-screen viewport capture. If frame_unreadable=true, "
-                        "do NOT use the frame as visual verification.",
+            description='Capture the active document with optional orientation and body/bbox framing. full_window includes the UI; zoom_to_fit=false preserves framing. frame_unreadable=true is failed visual evidence. For revision-bound multiview capture use observe_model.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1264,14 +1246,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="section_screenshot",
-            description="Section-view screenshot in ONE call: enables Section "
-                        "View on a plane (Front/Top/Right or any plane feature "
-                        "name) with offset/flip, frames (zoom_to_bodies/zoom_bbox/"
-                        "fit), captures, then switches the section OFF. The "
-                        "cheapest 'X-ray' for inspecting internals (hinges in "
-                        "pockets etc.) - transparency overlays are unreadable "
-                        "for nested parts. Includes unreadable-frame detection "
-                        "and verifies section cleanup with active-view data.",
+            description='Temporarily enable a section plane, frame and capture it, then disable the section and verify cleanup. Returns unreadable-frame diagnostics. Use for a specific internal-geometry question.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1301,10 +1276,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="zoom_to",
-            description="Frame the view on bodies / a feature / an explicit bbox "
-                        "(union bbox + margin -> ViewZoomTo2). Use instead of "
-                        "guessing ViewZoomTo2 coordinates (which produced "
-                        "unreadable close-ups).",
+            description='Center the live working view on named bodies, a feature or a bbox with margin. Use before focused expert/raw edits; observe_model restores this working view after its captures.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1322,12 +1294,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="normal_to_sketch",
-            description="Reliably orient the active sketch face-on without "
-                        "Ctrl+8's already-aligned side toggle. Reads the current "
-                        "view, chooses the nearest side/up, tries native Normal "
-                        "To, falls back to Orientation3, and verifies angular "
-                        "read-back. By default always invokes Fit on the active "
-                        "geometry and verifies its pixel occupancy/centering.",
+            description='Orient an active 2D sketch face-on, preserve the nearest stable side/up, then verify axes and pixel framing. Automatic for supported sketch tools; no extra call needed after them.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1371,10 +1338,7 @@ async def list_tools() -> list[Tool]:
         # -------------------- Freeze bar --------------------
         Tool(
             name="fix_freeze_bar",
-            description="Disable the Freeze Bar and move it to the top of the "
-                        "tree. Freeze Bar silently freezes new API features "
-                        "(0 faces, no error). Runs automatically on connect and "
-                        "before feature ops; call manually if features come out dead.",
+            description='Disable the Freeze Bar and move it to the tree top. Automatic on connect and supported feature operations; use manually only to recover frozen features.',
             inputSchema={"type": "object", "properties": {}, "required": []}
         ),
 
@@ -1392,13 +1356,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="execute_python",
-            description="Execute custom Python synchronously. Context: 'sw' (app), "
-                        "'doc' (active doc), 'automation', and helpers "
-                        "com_get/typed/select_by_id2/select_by_ray/get_modeler/"
-                        "detect_modal_dialog. The SW API is in METERS - convert "
-                        "user units yourself (mm*0.001 or automation._units."
-                        "to_meters). Use print() for output. For scripts > ~30s "
-                        "use execute_python_async.",
+            description='Run Python on the shared STA with sw, doc, automation and typed COM helpers; print returns output. Raw API units are metres. Prefer shape programs for supported geometry. A run longer than one call answers status RUNNING: collect it with wait_operation; waiting or a caller timeout never cancels COM.',
             inputSchema={
                 "type": "object",
                 "properties": {"code": {"type": "string"}},
@@ -1407,10 +1365,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="execute_python_async",
-            description="Submit Python for BACKGROUND execution (own COM "
-                        "apartment + own SW connection). Returns a job_id; poll "
-                        "with get_job_result. For long scripts that would exceed "
-                        "the MCP request timeout.",
+            description='Submit raw Python to the same serial STA and return job_id; wait_operation(operation_id=job_id) collects it. Does not enable parallel CAD or cancellation; raw API units are metres.',
             inputSchema={
                 "type": "object",
                 "properties": {"code": {"type": "string"}},
@@ -1419,8 +1374,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_job_result",
-            description="Get the status/result of an async job by job_id. "
-                        "Optionally block up to 'timeout' seconds.",
+            description='Compatibility alias of wait_operation: COM-free status/result of any operation by job_id (operation_id). timeout optionally waits in seconds (0 returns immediately); waiting never cancels the job.',
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1437,7 +1391,81 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []}
         ),
     ]
-    return augment_tool_schemas(tools + NEW_TOOLS)
+    tools.extend([
+        Tool(name="get_request_status", description="COM-free durable receipt lookup by idempotency_key (request_receipt.key of a mutation answer). Historical evidence only; never executes or retries CAD.",
+             inputSchema={"type":"object", "properties":{"idempotency_key":{"type":"string","minLength":1,"maxLength":256}}, "required":["idempotency_key"], "additionalProperties":False}),
+        Tool(name="wait_operation", description="Collect a long operation: COM-free bounded wait by operation_id. While it runs returns status RUNNING with elapsed_sec and stage; once it finishes returns exactly the result of the original tool, including views. Never cancels, repeats or alters the operation.",
+             inputSchema={"type":"object", "properties":{
+                 "operation_id":{"type":"string", "minLength":1},
+                 "wait_sec":{"type":"number", "minimum":0, "maximum":SYNC_WAIT_SEC, "default":SYNC_WAIT_SEC,
+                             "description":"How long this call waits; call again while status is RUNNING"}},
+                 "required":["operation_id"], "additionalProperties":False}),
+        Tool(name="get_session_report", description="COM-free counters of this MCP session from its local call trace: calls and seconds by tool, mutations and how many answered RUNNING, recovery calls, errors by code, answer and input sizes, slowest operations. Program text is never stored. Use it to review a modeling run.",
+             inputSchema={"type":"object", "properties":{}, "additionalProperties":False}),
+        Tool(name="get_executor_status", description="COM-free executor and durable quarantine status. Safe while SolidWorks is busy. busy=true is ordinary running work (use wait_operation); quarantined=true is an unknown outcome. Also reports server.version, server.code_changed_since_start (true: reconnect the MCP server to load the code on disk) and SolidWorks memory. With operation_id adds its status and result_summary; the full result comes from wait_operation.",
+             inputSchema={"type":"object", "properties":{"operation_id":{"type":"string"},
+                 "verbose":{"type":"boolean", "default":False, "description":"Include the complete retained result of operation_id"}}, "additionalProperties":False}),
+        Tool(name="reconcile_session", description="Only for an unknown outcome (quarantined session): inspect native state by the exact journal operation_id. Not needed after a long operation that finished. Never replays the original command; an orphaned or killed COM worker requires a verified SolidWorks restart.",
+             inputSchema={"type":"object", "properties":{"operation_id":{"type":"string"}}, "required":["operation_id"], "additionalProperties":False}),
+    ])
+    result = augment_tool_schemas(tools + NEW_TOOLS)
+    for tool in result:
+        if tool.name not in {"model_api_lookup", "measure_reference", "get_executor_status", "get_request_status", "get_job_result", "list_jobs", "wait_operation", "get_session_report"}:
+            tool.inputSchema.setdefault("properties", {})["execution_timeout_sec"] = {
+                "type":"number", "exclusiveMinimum":0, "maximum":SYNC_WAIT_SEC,
+                "description":"How long this call waits, including queue time. The operation keeps running after that: the call returns status RUNNING and wait_operation collects the result."}
+        if tool.name in MUTATING_TOOLS and tool.name not in {"observe_model", "export_model"}:
+            props = tool.inputSchema.setdefault("properties", {})
+            props.setdefault("idempotency_key", {"type":"string", "minLength":1, "maxLength":256,
+                "description":"Durable request identity; shape mutations derive it from document, starting revision and payload when omitted. An identical request is answered from its receipt (request_receipt.replayed) instead of running twice. It runs again when nothing would be duplicated: a create that left no file, or the same edit after mode=revert. An identical edit that FAILED is not run again: pass a new key to repeat it."})
+            props.setdefault("document_path", {"type":"string", "description":"Active saved part path; required with idempotency_key or plan_id"})
+            props.setdefault("expected_revision", {"type":"string", "description":"Starting revision from get_model_context; required with idempotency_key or plan_id"})
+    from .tool_lifecycle import annotate_lifecycle
+    return sorted(annotate_lifecycle(result), key=lambda tool: tool.name not in SHAPE_TOOL_NAMES)
+
+
+# get_job_result is a deprecated alias of wait_operation: still dispatched, listed in the expert catalog only.
+CORE_SESSION_TOOLS = {'get_executor_status','get_request_status','reconcile_session','wait_operation'}
+
+
+def _expert_tool():
+    return Tool(name='expert_tools',description='Discover expert operations: list with optional query, describe one schema, then call with nested arguments. Covers document management (open_document, close_document), session care (restart_solidworks, get_session_report), custom features, tracing and raw API (execute_python). DEPRECATED entries include replacements; calls remain compatible.',
+        inputSchema={'type':'object','properties':{
+            'action':{'type':'string','enum':['list','describe','call'],'default':'list'},
+            'query':{'type':'string','description':'Case-insensitive literal substring of the tool name or description. Use one keyword or a tool name.'},'name':{'type':'string'},
+            'arguments':{'type':'object','additionalProperties':True}},'additionalProperties':False})
+
+
+@server.list_tools()
+async def list_tools() -> list[Tool]:
+    catalog = _all_tools()
+    if os.environ.get('SOLIDWORKS_MCP_TOOL_PROFILE','shape').lower() == 'expert':
+        return catalog + [_expert_tool()]
+    return [tool for tool in catalog if tool.name in SHAPE_TOOL_NAMES | CORE_SESSION_TOOLS] + [_expert_tool()]
+
+
+def _resolve_expert(arguments):
+    import jsonschema
+    jsonschema.validate(arguments,_expert_tool().inputSchema)
+    catalog = {t.name:t for t in _all_tools() if t.name not in SHAPE_TOOL_NAMES | CORE_SESSION_TOOLS}
+    action=arguments.get('action','list'); name=arguments.get('name')
+    if action=='list':
+        if name is not None or 'arguments' in arguments:raise ValueError('list accepts only query')
+        query=arguments.get('query','').lower()
+        from .tool_lifecycle import catalog_summary
+        data={'tools':[catalog_summary(t) for t in catalog.values()
+                       if query in t.name.lower() or query in t.description.lower()]}
+    else:
+        if 'query' in arguments:raise ValueError('query is only supported by list')
+        if name not in catalog:raise ValueError('Unknown expert tool; use list or a core tool directly')
+        if action=='describe':
+            if 'arguments' in arguments:raise ValueError('describe does not execute arguments')
+            data={'tool':catalog[name].model_dump(exclude_none=True)}
+        else:
+            native_args=arguments.get('arguments',{})
+            jsonschema.validate(native_args,catalog[name].inputSchema)
+            return name,native_args
+    return {'success':True,'message':'Expert tool catalog','error_code':0,'error_name':'swSuccess','data':data}
 
 
 # ============================================================================
@@ -1453,13 +1481,35 @@ def format_result(r: Dict) -> str:
         lines.append(f"Error Code: {r['error_code']} ({r['error_name']})")
 
     if r.get("data"):
-        lines.append("Details: " + json.dumps(r["data"], indent=2,
+        # Compact separators: the reader is a model, and whitespace is context.
+        lines.append("Details: " + json.dumps(r["data"], separators=(",", ":"),
                                                ensure_ascii=False, default=str))
 
     return "\n".join(lines)
 
 
+def _outcome_unknown(result: dict) -> bool:
+    """True when a failed call reports that the native outcome is unknown.
+
+    A successful answer may carry text under "details"; only a dictionary is the error form.
+    """
+    data = result.get("data") or {}
+    details = (data.get("error") or {}).get("details") or data.get("details") or {}
+    return isinstance(details, dict) and bool(details.get("native_outcome_unknown"))
+
+
+def _is_com_free(name: str, arguments: dict) -> bool:
+    """Shape tools answered without SolidWorks, so they stay responsive while the STA is busy."""
+    if name == 'compare_reference':
+        # The native silhouette reads the bodies of the open part.
+        return (arguments or {}).get('source', 'draft') != 'native'
+    return (name in {'model_api_lookup', 'measure_reference', 'get_session_metrics'} or
+            (name == 'execute_model_code' and not _is_effectively_mutating(name, arguments)))
+
+
 def _is_effectively_mutating(name: str, arguments: dict) -> bool:
+    if name == "execute_model_code":
+        return (arguments or {}).get("mode", "analyze") in {"create", "edit", "revert"}
     if name == "image_to_sketch":
         commit_mode = ((arguments or {}).get("commit") or {}).get(
             "mode", "commit_if_confident")
@@ -1478,7 +1528,47 @@ def _offline_snapshot() -> Dict:
     }
 
 
-def _dispatch_offline_worker(automation, name: str, arguments: dict) -> Dict:
+def _run_isolated_process(command, *, timeout, cwd, env=None,
+                          cancel_event=None):
+    """Run one child process with bounded timeout and cooperative cancellation."""
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=cwd, stdin=subprocess.DEVNULL, env=env)
+    started = time.monotonic()
+    cancelled = False
+    timed_out = False
+    try:
+        while process.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                process.kill()
+                break
+            if time.monotonic() - started >= float(timeout):
+                timed_out = True
+                process.kill()
+                break
+            time.sleep(0.05)
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+    return {
+        "return_code": process.returncode,
+        "stdout": stdout or "",
+        "stderr": stderr or "",
+        "cancelled": cancelled,
+        "timed_out": timed_out,
+        "elapsed_sec": time.monotonic() - started,
+    }
+
+
+def _dispatch_offline_worker(automation, name: str, arguments: dict,
+                             cancel_event=None) -> Dict:
     if name not in {"image_to_sketch", "compare_sketch_to_reference",
                     "compare_body_silhouette_to_image", "compare_sketches"}:
         return automation._error(
@@ -1510,25 +1600,32 @@ def _dispatch_offline_worker(automation, name: str, arguments: dict) -> Dict:
                     return handle.read()[-4000:]
             except Exception:
                 return ""
-        try:
-            completed = subprocess.run(
-                command, capture_output=True, text=True, timeout=timeout,
-                cwd=str(Path(__file__).resolve().parent.parent), check=False,
-                stdin=subprocess.DEVNULL, env=worker_environment)
-        except subprocess.TimeoutExpired as exc:
+        completed = _run_isolated_process(
+            command, timeout=timeout,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=worker_environment, cancel_event=cancel_event)
+        if completed["cancelled"]:
+            return automation._error(
+                "WORKER_CANCELLED", "Offline image worker was cancelled",
+                details={"elapsed_sec": completed["elapsed_sec"],
+                         "stdout_tail": completed["stdout"][-2000:],
+                         "stderr_tail": completed["stderr"][-2000:],
+                         "progress_tail": progress_tail()})
+        if completed["timed_out"]:
             return automation._error(
                 "BUDGET_EXCEEDED",
                 f"Offline vector worker exceeded {timeout:g} seconds",
                 details={"limit": "max_elapsed_sec", "allowed": timeout,
-                         "stdout_tail": (exc.stdout or "")[-2000:],
-                         "stderr_tail": (exc.stderr or "")[-2000:],
+                         "stdout_tail": completed["stdout"][-2000:],
+                         "stderr_tail": completed["stderr"][-2000:],
                          "progress_tail": progress_tail()})
-        if completed.returncode != 0 or not os.path.isfile(response_path):
+        if (completed["return_code"] != 0 or
+                not os.path.isfile(response_path)):
             return automation._error(
                 "IMAGE_LOW_CONFIDENCE", "Offline image worker failed",
-                details={"return_code": completed.returncode,
-                         "stdout_tail": completed.stdout[-2000:],
-                         "stderr_tail": completed.stderr[-2000:],
+                details={"return_code": completed["return_code"],
+                         "stdout_tail": completed["stdout"][-2000:],
+                         "stderr_tail": completed["stderr"][-2000:],
                          "progress_tail": progress_tail()})
         with open(response_path, "r", encoding="utf-8") as handle:
             result = json.load(handle)
@@ -1622,8 +1719,127 @@ def _dispatch_two_phase_sketch_comparison(automation,
     return result
 
 
+def _read_json_if_available(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return None
+
+
+def _dispatch_native_body_capture_comparison(
+        automation, original, applied_mesh_settings, total_timeout, started,
+        cancel_event=None):
+    """Run all potentially blocking body capture COM in a killable process."""
+    screenshot_path = str(original["screenshot_path"])
+    diagnostic_path = screenshot_path + ".body-comparison-diagnostic.json"
+    with tempfile.TemporaryDirectory(
+            prefix="solidworks-mcp-body-capture-") as directory:
+        request_path = str(Path(directory) / "request.json")
+        response_path = str(Path(directory) / "response.json")
+        request = {
+            "arguments": original,
+            "mesh_directory": directory,
+            "mesh_settings": applied_mesh_settings,
+            "diagnostic_path": diagnostic_path,
+        }
+        with open(request_path, "w", encoding="utf-8") as handle:
+            json.dump(request, handle, ensure_ascii=False)
+        command = [sys.executable, "-B", "-u", "-m",
+                   "solidworks_mcp.body_capture_worker",
+                   request_path, response_path]
+        remaining = max(0.1, total_timeout - (time.monotonic() - started))
+        logger.info("Body comparison stage=isolated_native_capture begin")
+        completed = _run_isolated_process(
+            command, timeout=remaining,
+            cwd=str(Path(__file__).resolve().parent.parent),
+            env=os.environ.copy(), cancel_event=cancel_event)
+        diagnostic = _read_json_if_available(diagnostic_path) or {}
+        if completed["cancelled"] or completed["timed_out"]:
+            code = ("WORKER_CANCELLED" if completed["cancelled"]
+                    else "BUDGET_EXCEEDED")
+            message = ("Native body capture worker was cancelled" if
+                       completed["cancelled"] else
+                       f"Native body capture exceeded {remaining:g} seconds")
+            return automation._error(
+                code, message, debug_artifacts=[diagnostic_path],
+                details={
+                    "limit": "max_elapsed_sec",
+                    "allowed": total_timeout,
+                    "elapsed_sec": time.monotonic() - started,
+                    "native_capture": diagnostic,
+                    "native_outcome_unknown": True,
+                    "stdout_tail": completed["stdout"][-2000:],
+                    "stderr_tail": completed["stderr"][-2000:],
+                })
+        capture = _read_json_if_available(response_path)
+        if not isinstance(capture, dict):
+            return automation._error(
+                "INVARIANT_FAILED", "Native body capture worker failed",
+                debug_artifacts=[diagnostic_path],
+                details={
+                    "return_code": completed["return_code"],
+                    "native_capture": diagnostic,
+                    "native_outcome_unknown": True,
+                    "stdout_tail": completed["stdout"][-2000:],
+                    "stderr_tail": completed["stderr"][-2000:],
+                })
+        if not capture.get("success"):
+            capture.setdefault("data", {}).setdefault(
+                "debug_artifacts", []).append(diagnostic_path)
+            capture["data"]["native_capture"] = diagnostic
+            return capture
+        capture_data = capture.get("data") or {}
+        elapsed = time.monotonic() - started
+        if elapsed >= total_timeout:
+            return automation._error(
+                "BUDGET_EXCEEDED",
+                "Native body capture exhausted the comparison budget",
+                debug_artifacts=[diagnostic_path],
+                details={"limit": "max_elapsed_sec", "allowed": total_timeout,
+                         "elapsed_sec": elapsed,
+                         "native_capture": diagnostic})
+        worker_arguments = copy.deepcopy(original)
+        worker_arguments.update({
+            "candidate_source": "native_mesh",
+            "capture_screenshot": False,
+            "screenshot_data": capture_data["screenshot_data"],
+            "mesh_paths": capture_data["mesh_paths"],
+            "mesh_settings": capture_data["mesh_settings"],
+            "bodies": capture_data["body_names"],
+            "budget": {
+                **dict(original.get("budget") or {}),
+                "max_elapsed_sec": max(0.1, total_timeout - elapsed),
+            },
+        })
+        logger.info("Body comparison stage=isolated_mesh_worker begin")
+        result = _dispatch_offline_worker(
+            automation, "compare_body_silhouette_to_image",
+            worker_arguments, cancel_event=cancel_event)
+        data = result.setdefault("data", {})
+        data["execution_boundary"] = {
+            "com_process": "none",
+            "isolated_native_capture_worker": (
+                "orthographic_screenshot_and_native_stl_export"),
+            "isolated_projection_worker": (
+                "native_triangle_projection_union_and_reference_metrics"),
+            "native_image_libraries_in_com": False,
+        }
+        data["native_capture"] = {
+            "diagnostic_path": diagnostic_path,
+            "last_completed_stage": diagnostic.get("last_completed_stage"),
+            "triangle_count": diagnostic.get("triangle_count", 0),
+            "body_triangles": diagnostic.get("body_triangles", {}),
+            "visibility_restored": diagnostic.get("visibility_restored"),
+        }
+        data["two_phase_elapsed_sec"] = round(
+            time.monotonic() - started, 3)
+        return result
+
+
 def _dispatch_two_phase_body_comparison(automation,
-                                        arguments: dict) -> Dict:
+                                        arguments: dict,
+                                        cancel_event=None) -> Dict:
     """Capture UI evidence and export native body meshes before comparison."""
     started = time.monotonic()
     original = copy.deepcopy(arguments or {})
@@ -1663,6 +1879,9 @@ def _dispatch_two_phase_body_comparison(automation,
             return automation._error(
                 "INVALID_PLAN",
                 "Native silhouette mesh must preserve the CAD origin")
+        return _dispatch_native_body_capture_comparison(
+            automation, original, applied_mesh_settings, total_timeout,
+            started, cancel_event=cancel_event)
 
     orientation = str(original.get("orientation") or "front")
     requested_bodies = [str(name) for name in (original.get("bodies") or [])]
@@ -1818,7 +2037,8 @@ def _dispatch_two_phase_body_comparison(automation,
             **budget, "max_elapsed_sec": max(0.1, total_timeout - elapsed)}
         logger.info("Body comparison stage=isolated_image_worker begin")
         result = _dispatch_offline_worker(
-            automation, "compare_body_silhouette_to_image", worker_arguments)
+            automation, "compare_body_silhouette_to_image", worker_arguments,
+            cancel_event=cancel_event)
     total_elapsed = time.monotonic() - started
     logger.info(
         "Body comparison stage=isolated_worker complete success=%s "
@@ -1967,25 +2187,397 @@ def _dispatch_two_phase_vector_commit(automation, arguments: dict) -> Dict:
 # Tool Handlers
 # ============================================================================
 
+def tool_result_content(name, result):
+    """Deliver view pixels inline; keep the legacy text block first."""
+    result = copy.deepcopy(result)
+    content = []
+    data = result.get("data") or {}
+    image_items = {item.get('path'): item for item in data.get('images', [])}
+    paths = [item.get("path") for item in data.get("images", [])]
+    if name in {"take_screenshot", "section_screenshot"} and result.get("success"):
+        if not data.get("frame_unreadable"):
+            paths.append(data.get("path"))
+    for path in dict.fromkeys(p for p in paths if p):
+        try:
+            from PIL import Image
+            import hashlib
+            item = image_items.get(path)
+            if item and item.get('sha256'):
+                with open(path, 'rb') as artifact:
+                    if hashlib.sha256(artifact.read()).hexdigest() != item['sha256']:
+                        raise ValueError('Native observation image changed after capture')
+            with Image.open(path) as source:
+                img = source.convert("RGB")
+            img.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            if item is not None and item.get('sha256'):
+                item.update(delivered_size_px=list(img.size),
+                            delivered_sha256=hashlib.sha256(buf.getvalue()).hexdigest())
+            content.append(ImageContent(type="image", mimeType="image/png",
+                                       data=base64.b64encode(buf.getvalue()).decode("ascii")))
+        except Exception as exc:
+            if name == 'observe_model':
+                result = {**result, 'success': False, 'message': str(exc),
+                          'error_code': -1, 'error_name': 'OBSERVATION_IMAGE_DELIVERY_FAILED',
+                          'data': {k: v for k, v in data.items() if k != 'images'}}
+                content = []
+                break
+            content.append(TextContent(type="text", text=f"Image delivery failed: {exc}"))
+    content.insert(0, TextContent(type="text", text=format_result(result)))
+    if name in SHAPE_TOOL_NAMES:
+        return CallToolResult(content=content, structuredContent=result,
+                              isError=not result.get("success", False))
+    return content
+
+
+def _executor_content(name, result):
+    try:
+        rendered = tool_result_content(name, result)
+        if not isinstance(rendered, CallToolResult):
+            rendered = CallToolResult(content=rendered, structuredContent=result,
+                                      isError=not result.get('success', False))
+        # Validate the same envelope as the SDK writer before it can close stdio.
+        JSONRPCMessage(JSONRPCResponse(jsonrpc='2.0', id=0,
+            result=rendered.model_dump(by_alias=True))).model_dump_json(by_alias=True, exclude_none=True)
+        return rendered
+    except Exception as exc:
+        logger.warning('Tool response preparation failed for %s: %s', name, type(exc).__name__)
+        original = result if isinstance(result, dict) else {}
+        data = original.get('data')
+        data = data if isinstance(data, dict) else {}
+        error = data.get('error')
+        error = error if isinstance(error, dict) else {}
+        executor = data.get('executor')
+        executor = executor if isinstance(executor, dict) else {}
+        handler_success = original.get('success')
+        handler_error = error.get('code')
+        if type(handler_error) is not str:
+            handler_error = original.get('error_name')
+        safe_data = {'response_preparation': {
+            'success': False, 'error_type': type(exc).__name__,
+            'handler_success': handler_success if type(handler_success) is bool else None,
+            'handler_error': handler_error if type(handler_error) is str and handler_success is False else None}}
+        for operation_id in (executor.get('operation_id'), data.get('operation_id')):
+            if type(operation_id) is str:
+                safe_data['operation_id'] = operation_id
+                break
+        # Preserve only independently serializable outcome/receipt fields; never
+        # modify the executor's result or replay a completed CAD operation.
+        for key in ('status', 'request_receipt', 'timings_ms', 'native_outcome_unknown'):
+            if key not in data:
+                continue
+            try:
+                safe_data[key] = json.loads(json.dumps(data[key], allow_nan=False))
+            except Exception:
+                pass
+        failed = failure('RESULT_SERIALIZATION_ERROR',
+            'The tool handler returned, but its response could not be prepared for MCP. '
+            'The operation was not repeated; inspect its status or request receipt before retrying.', **safe_data)
+        return CallToolResult(content=[TextContent(type='text', text=format_result(failed))],
+                              structuredContent=failed, isError=True)
+
+
+def _reconcile_native(restarted):
+    if restarted:
+        # Drop proxies to the previous out-of-process server on the STA owner.
+        sw_automation._sw_app = None
+        sw_automation._connected = False
+        sw_automation._shape_observation_cache = {}
+    ui = detect_modal_dialog()
+    if ui.get('modal'):
+        return failure('MODAL_DIALOG_BLOCKING', 'Resolve the modal before reconciliation', ui=ui)
+    result = dispatch_new_tool(sw_automation, 'get_model_context', {})
+    if result.get('success'):
+        result.setdefault('data', {})['reconciliation'] = {
+            'state_inspected': True, 'original_operation_replayed': False,
+            'solidworks_restart_verified': restarted,
+            'acceptance': 'CURRENT_STATE_ONLY; inspect the model before further edits'}
+    return result
+
+
+def _sync_wait(requested):
+    """How long this call may block. It bounds the wait, never the operation."""
+    if requested is None:
+        return SYNC_WAIT_SEC
+    requested = float(requested)
+    if not requested > 0:
+        raise ValueError('execution_timeout_sec must be positive')
+    return min(requested, SYNC_WAIT_SEC)
+
+
+def _quarantine_facts():
+    """Why the session is blocked and which journalled operation must be reconciled."""
+    status = cad_executor.status()
+    journal = status.get('journal') or {}
+    facts = {'unresolved_operation_id': journal.get('operation_id'),
+             'unresolved_status': journal.get('status'), 'unresolved_tool': journal.get('tool')}
+    facts.update({key: status[key] for key in ('cause', 'owner_alive', 'recovery') if key in status})
+    return facts
+
+
+async def _report_stages(session, token, op):
+    """Optional progress notifications; correctness never depends on them."""
+    sent, last = 0, None
+    try:
+        while True:
+            state = cad_executor.operation_snapshot(op)
+            progress = state.get('progress') or {}
+            signature = (state['stage'], progress.get('completed'), progress.get('updated_at'))
+            if signature != last:
+                last, sent = signature, sent + 1
+                # MCP progress remains monotonic across phases; counters describe this phase only.
+                await session.send_progress_notification(
+                    token, sent, None, message=json.dumps({'stage': state['stage'], 'progress': progress}))
+            await asyncio.sleep(1)
+    except Exception:
+        return
+
+
+async def _await_operation(op, wait_sec):
+    reporter = None
+    try:
+        context = server.request_context
+        token = getattr(context.meta, 'progressToken', None) if context.meta else None
+        if token is not None:
+            reporter = asyncio.create_task(_report_stages(context.session, token, op))
+    except Exception:
+        reporter = None  # No request context, e.g. a direct in-process call.
+    try:
+        return await cad_executor.wait(op, wait_sec)
+    finally:
+        if reporter is not None:
+            reporter.cancel()
+
+
+async def _wait_operation(operation_id, wait_sec):
+    """Return (tool name for content rendering, result) without touching COM."""
+    if not isinstance(operation_id, str) or not operation_id:
+        raise ValueError('operation_id is required')
+    wait_sec = float(SYNC_WAIT_SEC if wait_sec is None else wait_sec)
+    if not 0 <= wait_sec <= SYNC_WAIT_SEC:
+        raise ValueError(f'wait_sec must be in [0, {SYNC_WAIT_SEC:g}]')
+    op = cad_executor.find(operation_id)
+    if op is not None:
+        result = await cad_executor.wait(op, wait_sec, withdraw_queued=False)
+        # A finished operation is rendered as its original tool, images included.
+        return (op.name if op.response.done() else 'wait_operation'), result
+    from .automation.operation_results import OperationResultError
+    try:
+        saved = await asyncio.to_thread(cad_executor.results.get, operation_id)
+    except OperationResultError as exc:
+        return 'wait_operation', failure(exc.code, str(exc), operation_id=operation_id)
+    if saved is not None:
+        return saved['tool'], saved['result']
+    status = cad_executor.status(operation_id)
+    record = status.get('operation')
+    if record is None:
+        return 'wait_operation', failure('OPERATION_NOT_FOUND', 'No such operation in this MCP process or the session journal',
+                                         operation_id=operation_id)
+    state = record.get('status')
+    known = {'operation_id': operation_id, 'tool': record.get('tool'), 'status': state,
+             'result_available': False, 'result_summary': record.get('result_summary')}
+    if state == 'RUNNING' and status.get('owner_alive'):
+        return 'wait_operation', {'success': True, 'error_code': 0, 'error_name': 'swSuccess',
+            'message': 'The operation runs in another MCP process; its full result is delivered there',
+            'data': {**known, 'next': 'wait_operation'}}
+    if state == 'RUNNING':
+        return 'wait_operation', failure('OUTCOME_UNKNOWN', 'The MCP process that owned this operation exited before it returned',
+                                         cause='MCP_OWNER_PROCESS_EXITED', **known)
+    finished = bool((record.get('result_summary') or {}).get('success')) and state in {'COMPLETED', 'RECONCILED'}
+    return 'wait_operation', {'success': finished, 'error_code': 0 if finished else -1,
+        'error_name': 'swSuccess' if finished else (
+            (record.get('result_summary') or {}).get('error_name') or
+            ('OPERATION_RESULT_UNAVAILABLE' if state in {'COMPLETED', 'RECONCILED'} else str(state))),
+        'message': 'The operation ended in an earlier MCP process; only its journal summary remains',
+        'data': known}
+
+
 @server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+async def call_tool(name: str, arguments: dict):
+    """Dispatch one MCP call and leave a trace line: tool, duration, answer size, outcome."""
+    started = time.perf_counter()
+    rendered = await _dispatch_tool(name, arguments)
+    try:
+        traced, traced_arguments = name, arguments or {}
+        if name == 'expert_tools' and traced_arguments.get('action', 'list') == 'call':
+            traced, traced_arguments = traced_arguments.get('name') or name, traced_arguments.get('arguments') or {}
+        content = getattr(rendered, 'content', None) or []
+        result = getattr(rendered, 'structuredContent', None)
+        data = (result or {}).get('data') or {}
+        operation_id = (data.get('executor') or {}).get('operation_id') or data.get('operation_id')
+        operation = cad_executor.find(operation_id) if operation_id else None
+        session_trace.record(
+            traced, traced_arguments, result,
+            time.perf_counter() - started,
+            sum(len(getattr(item, 'text', '') or '') for item in content),
+            sum(1 for item in content if getattr(item, 'type', '') == 'image'),
+            operation={'tool': operation.name, 'mode': operation.arguments.get('mode')}
+                      if operation is not None else None)
+    except Exception:
+        logger.debug('Session trace failed', exc_info=True)
+    return rendered
+
+
+async def _dispatch_tool(name: str, arguments: dict):
+    """Keep transport and COM-free analysis responsive while the STA is busy."""
+    arguments = dict(arguments or {})
+    timeout = arguments.pop('execution_timeout_sec', None)
+    try:
+        if name == 'expert_tools':
+            try:
+                resolved = _resolve_expert(arguments)
+            except Exception as exc:
+                return _executor_content(name,failure('INVALID_ARGUMENT',str(exc)))
+            if isinstance(resolved,tuple):
+                return await _dispatch_tool(*resolved)
+            return _executor_content(name,resolved)
+        if name in {'execute_python', 'execute_python_async'} and (arguments.get('ui_guard') or {}):
+            validate_policy(arguments['ui_guard'])
+        if name == 'get_executor_status':
+            result = {'success': True, 'message': 'Executor status', 'error_code': 0,
+                      'error_name': 'swSuccess', 'data': {**cad_executor.status(
+                          arguments.get('operation_id'), include_result=bool(arguments.get('verbose'))),
+                          'server': server_state(), 'memory': solidworks_memory(),
+                          'processes': process_snapshot(),
+                          'reader': sw_automation._runtime.reader_snapshot()}}
+        elif name == 'get_session_report':
+            result = {'success': True, 'message': 'Session report from the local call trace', 'error_code': 0,
+                      'error_name': 'swSuccess',
+                      'data': {**session_report(session_trace.snapshot()),
+                               'trace_file': str(session_trace.path) if session_trace.path else None,
+                               'server': server_state()}}
+        elif name == 'wait_operation':
+            rendered_as, result = await _wait_operation(arguments.get('operation_id'), arguments.get('wait_sec'))
+            original = cad_executor.find(arguments.get('operation_id'))
+            attach_recovery(rendered_as, getattr(original, 'arguments', None), result)
+            return await asyncio.to_thread(_executor_content, rendered_as, result)
+        elif name in {'list_jobs', 'get_job_result'}:
+            if name == 'list_jobs':
+                data = {'jobs': cad_executor.list_jobs()}
+            else:
+                job_id = arguments.get('job_id')
+                wait_sec = float(arguments.get('timeout') or 0)
+                if not job_id or not 0 <= wait_sec <= 60:
+                    raise ValueError('job_id is required; timeout must be in [0, 60]')
+                until = time.monotonic() + min(wait_sec, SYNC_WAIT_SEC)
+                while True:
+                    data = cad_executor.status(job_id, include_result=True)
+                    op = data.get('operation') or {}
+                    if op.get('status') not in {'QUEUED', 'RUNNING'} or time.monotonic() >= until:
+                        break
+                    await asyncio.sleep(min(.05, max(0, until-time.monotonic())))
+                if data.get('operation') is None:
+                    return _executor_content(name, failure('JOB_NOT_FOUND', 'Operation was not retained', job_id=job_id))
+            op = data.get('operation') or {}
+            success = (op.get('status') not in {'OUTCOME_UNKNOWN', 'RETURNED_LATE', 'NOT_EXECUTED', 'ROLLBACK_UNCONFIRMED'} and
+                       (op.get('result') or {}).get('success', True))
+            result = {'success': success, 'message': 'Executor jobs', 'error_code': 0 if success else -1,
+                      'error_name': 'swSuccess' if success else op.get('status'), 'data': data}
+        elif name == 'get_request_status':
+            key = arguments.get('idempotency_key')
+            if not isinstance(key, str) or not key or len(key) > 256:
+                raise ValueError('idempotency_key is required (1–256 characters)')
+            receipt = await asyncio.to_thread(RequestJournal().get, key)
+            result = {'success': True, 'message': 'Durable request receipt; no CAD execution',
+                      'error_code': 0, 'error_name': 'swSuccess', 'data': {'receipt': receipt}}
+        elif _is_com_free(name, arguments):
+            result = await asyncio.to_thread(dispatch_new_tool, sw_automation, name, arguments)
+        elif name == 'image_to_sketch' and not _is_effectively_mutating(name, arguments):
+            result = await asyncio.to_thread(_dispatch_offline_worker, sw_automation, name, arguments)
+        else:
+            request_spec(name, arguments)  # Validate durable identity before queuing.
+            wait_sec = _sync_wait(timeout)
+            if name == 'execute_python_async':
+                code = arguments.get('code')
+                if not code:
+                    raise ValueError('code is required')
+                # The budget feeds the UI watchdog; it does not cancel the job.
+                runtime_hint = min(1800., float((arguments.get('budget') or {}).get('max_elapsed_sec', 1800)))
+                op = cad_executor.submit(name, arguments,
+                    lambda: _execute_cad_request('execute_python', arguments), runtime_hint, detached=True)
+                result = {'success': True, 'message': 'Queued on the shared STA owner; collect with wait_operation',
+                          'error_code': 0, 'error_name': 'swSuccess',
+                          'data': {'job_id': op.id, 'operation_id': op.id, 'status': 'QUEUED',
+                                   'next': 'wait_operation'}}
+            elif name == 'restart_solidworks':
+                discard = arguments.get('discard_unsaved', False)
+                if not isinstance(discard, bool) or set(arguments) - {'discard_unsaved'}:
+                    raise ValueError('restart_solidworks accepts only a boolean discard_unsaved')
+                # Recovery tooling runs in a quarantined session and keeps its journal.
+                op = cad_executor.submit(name, arguments,
+                                         lambda: sw_automation.restart_solidworks(discard_unsaved=discard),
+                                         maintenance=True)
+                result = await _await_operation(op, wait_sec)
+            elif name == 'reconcile_session':
+                operation_id = arguments.get('operation_id')
+                if not operation_id:
+                    raise ValueError('operation_id is required')
+                op = cad_executor.submit(name, arguments, _reconcile_native, recovery_id=operation_id)
+                result = await _await_operation(op, wait_sec)
+            else:
+                op = cad_executor.submit(name, arguments,
+                                         lambda: _execute_cad_request(name, arguments))
+                result = await _await_operation(op, wait_sec)
+        if isinstance(result, dict) and result.get('error_name') == 'SESSION_QUARANTINED':
+            result.setdefault('data', {}).update(_quarantine_facts())
+        attach_recovery(name, arguments, result)
+        return await asyncio.to_thread(_executor_content, name, result)
+    except (ValueError, SessionBusy, RequestConflict) as exc:
+        code = (exc.code if isinstance(exc, RequestConflict) else
+                'SESSION_QUARANTINED' if isinstance(exc, SessionQuarantined)
+                else 'CAD_SESSION_BUSY' if isinstance(exc, SessionBusy) else 'INVALID_ARGUMENT')
+        details = dict(getattr(exc, 'details', None) or {})
+        if code == 'SESSION_QUARANTINED':
+            details.update(_quarantine_facts())
+        return _executor_content(name, attach_recovery(name, arguments, failure(code, str(exc), **details)))
+
+
+def _execute_cad_request(name, arguments):
+    native_args = dict(arguments)
+    native_args.pop('idempotency_key', None)
+    sw_automation._target_activated = None
+    result = execute_request(sw_automation, name, arguments,
+                             lambda: _call_tool_direct(name, native_args))
+    activated = getattr(sw_automation, '_target_activated', None)
+    if activated is not None and isinstance(result, dict) and isinstance(result.get('data'), dict):
+        # Tools addressed by document_path report whether they switched the active document.
+        result['data']['activated'] = activated
+    return result
+
+
+def _call_tool_direct(name: str, arguments: dict):
     """Handle MCP tool calls"""
     token = None
+    lease = None
     try:
         logger.info(f"Tool: {name}, Args: {arguments}")
 
         mutating = _is_effectively_mutating(name, arguments)
+        if _is_com_free(name, arguments):
+            return dispatch_new_tool(sw_automation, name, arguments)
+        if name != "execute_python_async" and (
+                mutating or name in {"take_screenshot", "section_screenshot",
+                                     "set_view_orientation"}):
+            lease = SessionLease().acquire()
         offline_analysis = (name == "image_to_sketch" and not mutating)
-        before_snapshot = (_offline_snapshot() if offline_analysis else
+        isolated_native_body = (
+            name == "compare_body_silhouette_to_image" and
+            str((arguments or {}).get("candidate_source") or
+                "native_mesh").lower() == "native_mesh")
+        # Detect a modal before any document snapshot can block in COM.
+        # Diagnostics are needed exactly when the UI is blocked: never gate them.
+        preflight = (None if name in {'recover_environment', 'get_environment_status'} else
+                     sw_automation.ui_preflight(name, arguments, mutating=True))
+        if preflight is not None:
+            return preflight
+        snapshot_required = mutating and name != 'observe_model'
+        before_snapshot = (_offline_snapshot() if
+                           (offline_analysis or isolated_native_body or not snapshot_required) else
                            sw_automation._document_snapshot())
         before_metrics = sw_automation._runtime.report()
         token = sw_automation._runtime.begin_tool(
             name, arguments or {}, before_snapshot)
-        preflight = sw_automation.ui_preflight(
-            name, arguments, mutating=mutating)
-        if preflight is not None:
-            sw_automation._runtime.finish_tool(token, False, before_snapshot)
-            return [TextContent(type="text", text=format_result(preflight))]
 
         if name in FIRST_GEOMETRY_TOOLS and mutating:
             doc = sw_automation.app.ActiveDoc if sw_automation.app else None
@@ -1996,8 +2588,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     if not saved.get("success"):
                         sw_automation._runtime.finish_tool(
                             token, False, sw_automation._document_snapshot())
-                        return [TextContent(type="text",
-                                            text=format_result(saved))]
+                        return saved
                 elif not (arguments or {}).get("allow_unsaved_document", False):
                     blocked = sw_automation._error(
                         "DOCUMENT_UNSAVED",
@@ -2007,8 +2598,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                             "Provide an absolute .SLDPRT save_path to preserve progress."])
                     sw_automation._runtime.finish_tool(
                         token, False, sw_automation._document_snapshot())
-                    return [TextContent(type="text",
-                                        text=format_result(blocked))]
+                    return blocked
 
         # -------------------- Connection --------------------
         if name == "connect_solidworks":
@@ -2414,7 +3004,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 result = sw_automation._result(False, "Code is required",
                                                SwErrors.swInvalidInput)
             else:
-                result = _execute_python_fixed(code)
+                result = _execute_python_fixed(code, arguments.get("ui_guard"))
 
         elif name == "execute_python_async":
             code = arguments.get("code", "")
@@ -2448,8 +3038,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 result = _dispatch_two_phase_sketch_comparison(
                     sw_automation, arguments)
             elif name == "compare_body_silhouette_to_image":
-                result = _dispatch_two_phase_body_comparison(
-                    sw_automation, arguments)
+                if isolated_native_body:
+                    result = _dispatch_two_phase_body_comparison(sw_automation, arguments)
+                else:
+                    result = _dispatch_two_phase_body_comparison(
+                        sw_automation, arguments)
             elif name == "compare_sketches":
                 result = _dispatch_two_phase_sketches_comparison(
                     sw_automation, arguments)
@@ -2460,6 +3053,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = sw_automation._result(False, f"Unknown tool: {name}",
                                            SwErrors.swUnknownError)
 
+        if _outcome_unknown(result):
+            result.setdefault("data", {})["native_outcome_unknown"] = True
+        if name == 'execute_python' and not result.get('success'):
+            # Arbitrary code may invalidate COM references or leave partial edits.
+            # Return its evidence without a second CAD call masking the failure.
+            elapsed = sw_automation._runtime.finish_tool(token, False, _offline_snapshot())
+            token = None
+            result.setdefault('data', {})['server_elapsed_ms'] = round(elapsed * 1000, 3)
+            return result
+        if (result.get("data") or {}).get("native_outcome_unknown"):
+            # Never probe COM or attempt recovery after terminating its client.
+            sw_automation._runtime.finish_tool(token, False, _offline_snapshot())
+            token = None
+            return result
         result = enrich_legacy_error(result)
         recovery_policy = (arguments or {}).get("recovery") or {}
         if (not result.get("success") and recovery_policy.get("auto_recover")
@@ -2483,7 +3090,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 sw_automation._runtime.last_saved_body_at = _time.time()
         result = sw_automation.ui_postflight(
             name, result, mutating=mutating)
-        after_snapshot = (_offline_snapshot() if offline_analysis else
+        after_snapshot = (_offline_snapshot() if
+                          (offline_analysis or isolated_native_body or not snapshot_required) else
                           sw_automation._document_snapshot())
         elapsed = sw_automation._runtime.finish_tool(
             token, bool(result.get("success")), after_snapshot)
@@ -2510,17 +3118,28 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result.setdefault("data", {})["server_elapsed_ms"] = round(
             elapsed * 1000, 3)
         logger.info(f"Result: success={result['success']}")
-        return [TextContent(type="text", text=format_result(result))]
+        return result
 
+    except SessionBusy as exc:
+        return sw_automation._error("CAD_SESSION_BUSY", str(exc), recoverable=True)
+    except asyncio.CancelledError:
+        logger.info("Tool cancelled: %s", name)
+        if token is not None:
+            sw_automation._runtime.finish_tool(
+                token, False, _offline_snapshot())
+        raise
     except Exception as e:
         logger.error(f"Tool error: {e}\n{traceback.format_exc()}")
         if token is not None:
             sw_automation._runtime.finish_tool(
-                token, False, sw_automation._document_snapshot())
+                token, False, _offline_snapshot())
         result = sw_automation._error(
             "COM_MEMBER_MISMATCH", f"Unhandled tool error: {e}",
             com_hresult=getattr(e, "hresult", None))
-        return [TextContent(type="text", text=format_result(result))]
+        return result
+    finally:
+        if lease is not None:
+            lease.close()
 
 
 # ============================================================================
@@ -2563,9 +3182,32 @@ def _build_exec_context(sw_app, doc):
     }
 
 
-def _execute_python_fixed(code: str) -> Dict:
-    """Execute custom Python synchronously with stdout capture."""
+def _execute_python_fixed(code: str, ui_guard=None) -> Dict:
+    """Execute raw code on the STA owner with an optional UI-only watchdog."""
+    guard = None
+    captured_stdout, captured_stderr = io.StringIO(), io.StringIO()
+    stage = 'compile_python'
+
+    def close_guard():
+        # Consume ownership first: cleanup must never repeat or hide the cause.
+        nonlocal guard
+        current, guard = guard, None
+        if current is None:
+            return None
+        try:
+            return current.close()
+        except Exception as exc:
+            return {'cleanup_error': f'{type(exc).__name__}: {exc}'}
+
     try:
+        compiled = compile(code, '<mcp-execute-python>', 'exec')
+        stage = 'preflight'
+        if ui_guard and ui_guard.get('enabled', True):
+            guard = StaWatchdog(cad_executor.current_operation(), ui_guard, cad_executor.abandon)
+            try:
+                guard.start()
+            except Exception as exc:
+                return failure('WATCHDOG_PREFLIGHT_FAILED', str(exc), watchdog=close_guard())
         if not sw_automation.is_connected:
             r = sw_automation.connect()
             if not r["success"]:
@@ -2575,17 +3217,26 @@ def _execute_python_fixed(code: str) -> Dict:
             sw_automation.app,
             sw_automation.app.ActiveDoc if sw_automation.app else None)
 
+        if guard:
+            exec_globals['com_get'] = guard.wrap_com_get(exec_globals['com_get'])
         old_stdout, old_stderr = sys.stdout, sys.stderr
-        captured_stdout, captured_stderr = io.StringIO(), io.StringIO()
 
         try:
             sys.stdout, sys.stderr = captured_stdout, captured_stderr
-            exec(code, exec_globals)
+            stage = 'execute_python'
+            exec(compiled, exec_globals)
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
         stdout_text = captured_stdout.getvalue()
         stderr_text = captured_stderr.getvalue()
+        watchdog_result = close_guard()
+        if watchdog_result and watchdog_result.get('cleanup_error'):
+            from .automation.python_diagnostics import execution_failure
+            from .shape_program import ProgramError
+            return execution_failure(ProgramError('WATCHDOG_CLEANUP_FAILED',
+                watchdog_result['cleanup_error']), 'post_execution', '',
+                stdout_text, stderr_text, watchdog_result)
         result_val = exec_globals.get('result')
 
         message_parts = []
@@ -2603,49 +3254,30 @@ def _execute_python_fixed(code: str) -> Dict:
             "message": "\n\n".join(message_parts),
             "error_code": 0, "error_name": "swSuccess",
             "data": {"stdout": stdout_text, "stderr": stderr_text,
-                     "result": str(result_val) if result_val is not None else None}
+                     "result": str(result_val) if result_val is not None else None,
+                     "watchdog": watchdog_result}
         }
 
-    except SyntaxError as e:
-        return {
-            "success": False, "message": f"Syntax error: {e}",
-            "error_code": 999, "error_name": "swUnknownError",
-            "data": {"error_type": "SyntaxError", "details": str(e)}
-        }
-    except Exception as e:
+    except (Exception, SystemExit, KeyboardInterrupt) as e:
         tb = traceback.format_exc()
-        return {
-            "success": False,
-            "message": f"Execution error: {e}\n\nTraceback:\n{tb}",
-            "error_code": 999, "error_name": "swUnknownError",
-            "data": {"error_type": type(e).__name__,
-                     "error_message": str(e), "traceback": tb}
-        }
+        from .automation.python_diagnostics import execution_failure
+        watchdog_result = close_guard()
+        return execution_failure(e, stage, tb, captured_stdout.getvalue(),
+                                 captured_stderr.getvalue(), watchdog_result)
+
+    finally:
+        close_guard()
 
 
 def _execute_python_async(code: str, ui_guard=None, budget=None) -> Dict:
-    """Submit code for background execution; returns a job_id."""
-    def context_factory():
-        # Runs inside the worker thread (after CoInitialize): obtain a fresh
-        # SolidWorks connection - COM pointers cannot cross apartments.
-        import win32com.client
-        try:
-            app = win32com.client.GetObject(Class="SldWorks.Application")
-        except Exception:
-            app = win32com.client.Dispatch("SldWorks.Application")
-        doc = app.ActiveDoc if app else None
-        return _build_exec_context(app, doc)
-
-    watchdog = dict(ui_guard or {})
-    if budget and "max_elapsed_sec" in budget:
-        watchdog.setdefault("max_runtime_sec", budget["max_elapsed_sec"])
-    job = job_manager.submit(code, context_factory, watchdog=watchdog)
-    return {
-        "success": True,
-        "message": f"Job submitted: {job.id}. Poll with get_job_result.",
-        "error_code": 0, "error_name": "swSuccess",
-        "data": {"job_id": job.id, "status": job.status}
-    }
+    """Compatibility entry point: submit to the same owner, never a second COM thread."""
+    arguments = {'code': code, 'ui_guard': ui_guard, 'budget': budget}
+    op = cad_executor.submit('execute_python_async', arguments,
+        lambda: _execute_cad_request('execute_python', arguments),
+        min(1800., float((budget or {}).get('max_elapsed_sec', 1800))), detached=True)
+    return {'success': True, 'message': 'Queued on the shared STA owner',
+            'error_code': 0, 'error_name': 'swSuccess',
+            'data': {'job_id': op.id, 'status': 'QUEUED'}}
 
 
 def _get_job_result(job_id: str, timeout: float = 0) -> Dict:
@@ -2876,7 +3508,13 @@ def _get_environment_status() -> Dict:
 
 async def main():
     """Main entry point for MCP server"""
-    logger.info("Starting SolidworksMCP v6.5.31...")
+    # Load native image-verification extensions before any worker/COM dispatch.
+    # On Windows, first scipy.special initialization on the STA stalled inside
+    # DLL loading while the transport was starting its response worker thread.
+    import importlib
+    for dependency in ("numpy", "cv2", "scipy.ndimage"):
+        importlib.import_module(dependency)
+    logger.info("Starting SolidworksMCP v%s...", __version__)
     logger.info(f"Log file: {LOG_FILE}")
 
     async with stdio_server() as (read_stream, write_stream):

@@ -436,224 +436,64 @@ class BodyOperations:
     # ------------------------------------------------------------------
 
     def check_clearance(self, body_a: str, body_b: str,
-                        min_clearance: float = None,
-                        unit: str = None) -> Dict:
-        """
-        Clearance / interference check between two solid bodies. ESSENTIAL
-        for print-in-place multibody designs: SolidWorks allows separate
-        bodies to overlap silently.
-
-        (a) Minimum distance via IMeasure over the two selected bodies;
-        (b) intersection volume via temp body copies +
-            IBody2::Operations2(SWBODYINTERSECT=15901) - small ints like 2
-            fail with err=2 on SW2026.
-
-        Args:
-            body_a, body_b: Body names
-            min_clearance: Optional required clearance (user units). If set
-                and the measured distance is below it (or bodies intersect),
-                success=false.
-            unit: Unit for distances/volumes
-        """
+                        min_clearance: float = None, unit: str = None) -> Dict:
+        """Measure native boundary distance and overlap without changing selection."""
+        from .body_relations import measure_pair, validate_pairs
+        from .com_utils import command_scope
+        from .shape_observation import geometry_state, ensure_unchanged
         try:
             doc, err = self._require_part()
             if err:
                 return err
-
-            ba = self._find_body(doc, body_a)
-            bb = self._find_body(doc, body_b)
-            missing = [n for n, b in ((body_a, ba), (body_b, bb)) if b is None]
-            if missing:
-                names = [com_get(b, "Name", default="?")
-                         for b in self._get_solid_bodies(doc)]
-                return self._result(False,
-                    f"Body(ies) not found: {missing}. Existing: {names}",
-                    SwErrors.swSelectionError, {"existing_bodies": names})
-
-            unit_str = unit or self._units.default_unit.value
+            if body_a == body_b:
+                return self._error('BODY_PAIR_SCOPE', 'Choose two distinct bodies')
+            ba, bb = self._find_body(doc, body_a), self._find_body(doc, body_b)
+            if ba is None or bb is None:
+                return self._error('BODY_NOT_FOUND', 'Both named bodies must exist')
             k = self._units.from_meters(1.0, unit)
-            data = {"body_a": body_a, "body_b": body_b, "unit": unit_str,
-                    "min_distance": None, "interference": None,
-                    "intersection_volume": None, "intersection_bbox": None,
-                    "measure_ok": False, "intersect_check_ok": False}
-
-            # --- (a) Minimum distance via IMeasure ---
-            # CreateMeasure is ONLY reachable through the typed
-            # IModelDocExtension (dynamic dispatch -> "Member not found",
-            # same disease as GetModeler). Verified live on SW2026.
-            try:
-                doc.ClearSelection2(True)
-                sd = create_select_data(doc, 0)
-                ok_a = bool(ba.Select2(False, sd))
-                ok_b = bool(bb.Select2(True, sd))
-                if ok_a and ok_b:
-                    measure = None
-                    ext_t = typed(doc.Extension, "IModelDocExtension")
-                    if ext_t is not None:
-                        try:
-                            measure = ext_t.CreateMeasure()
-                        except Exception as e:
-                            logger.debug(f"typed CreateMeasure failed: {e}")
-                    calc_ok = False
-                    if measure is not None:
-                        try:
-                            calc_ok = bool(measure.Calculate(None))
-                        except Exception as e:
-                            logger.debug(f"Measure.Calculate failed: {e}")
-                    if calc_ok:
-                        dist = com_get(measure, "Distance", default=None)
-                        if dist is not None and float(dist) >= 0:
-                            data["min_distance"] = round(float(dist) * k, 4)
-                            data["measure_ok"] = True
-                        is_int = com_get(measure, "IsIntersect", default=None)
-                        if is_int is not None:
-                            data["interference"] = bool(is_int)
-                doc.ClearSelection2(True)
-            except Exception as e:
-                logger.debug(f"IMeasure distance failed: {e}")
-
-            # --- (b) Intersection volume via temp copies + Operations2 ---
-            try:
-                inter_info = self._intersect_bodies(ba, bb, k)
-                if inter_info is not None:
-                    data["intersect_check_ok"] = True
-                    data["intersection_volume"] = inter_info["volume"]
-                    data["intersection_bbox"] = inter_info["bbox"]
-                    if inter_info["volume"] and inter_info["volume"] > 1e-9:
-                        data["interference"] = True
-                        data["min_distance"] = 0.0
-                    elif data["interference"] is None:
-                        data["interference"] = False
-            except Exception as e:
-                logger.debug(f"Intersection check failed: {e}")
-
-            if not data["measure_ok"] and not data["intersect_check_ok"]:
-                return self._result(False,
-                    "Neither IMeasure nor Operations2 produced a result - "
-                    "clearance unknown",
-                    SwErrors.swUnknownError, data)
-
-            # --- Verdict ---
-            ok = True
-            if data["interference"]:
-                msg = (f"INTERFERENCE: '{body_a}' and '{body_b}' overlap"
-                       + (f", volume {data['intersection_volume']} "
-                          f"{unit_str}^3" if data["intersection_volume"]
-                          else ""))
-                if min_clearance is not None:
-                    ok = False
-            else:
-                msg = (f"Clearance '{body_a}' <-> '{body_b}': "
-                       f"{data['min_distance']} {unit_str}")
-                if (min_clearance is not None
-                        and data["min_distance"] is not None
-                        and data["min_distance"] < float(min_clearance)):
-                    ok = False
-                    msg += f" - BELOW required {min_clearance} {unit_str}"
+            query = {'id': 'legacy', 'a': {'body': body_a}, 'b': {'body': body_b}}
             if min_clearance is not None:
-                data["required_clearance"] = float(min_clearance)
-                data["clearance_ok"] = ok
-
-            return self._result(ok, msg,
-                SwErrors.swSuccess if ok else SwErrors.swFeatureError, data)
-        except Exception as e:
-            logger.error(f"Clearance error: {e}\n{traceback.format_exc()}")
-            return self._result(False, f"Error: {e}", SwErrors.swUnknownError)
+                query['min_clearance_mm'] = float(min_clearance)*1000/k
+            validate_pairs([query])
+            state = geometry_state(doc)
+            dirty = bool(com_get(doc, 'GetSaveFlag'))
+            with command_scope(self.app):
+                evidence = measure_pair(doc, ba, bb, query)
+            ensure_unchanged(self, doc, state)
+            if bool(com_get(doc, 'GetSaveFlag')) != dirty:
+                return self._error('INSPECTION_STATE_CHANGED', 'Measurement changed dirty state')
+            factor = k/1000
+            distance = evidence['clearance_mm']
+            volume = evidence['intersection_volume_mm3']
+            data = {'body_a': body_a, 'body_b': body_b,
+                    'unit': unit or self._units.default_unit.value,
+                    'min_distance': None if distance is None else distance*factor,
+                    'interference': evidence['interference'],
+                    'intersection_volume': None if volume is None else volume*factor**3,
+                    'intersection_bbox': None,
+                    'measure_ok': evidence['boundary_distance_mm'] is not None,
+                    'intersect_check_ok': volume is not None,
+                    'evidence': evidence}
+            passed = evidence['relation'] != 'UNKNOWN'
+            if min_clearance is not None:
+                data.update(required_clearance=float(min_clearance),
+                            clearance_ok=evidence['clearance_check']['passed'])
+                passed = data['clearance_ok'] is True
+            return self._result(passed, 'Native body relation: '+evidence['relation'],
+                                SwErrors.swSuccess if passed else SwErrors.swFeatureError, data)
+        except Exception as exc:
+            return self._error(getattr(exc, 'code', 'CLEARANCE_UNKNOWN'), str(exc))
 
     def _copy_body(self, body):
-        """Temp copy of a body (Copy2 on SW2020+, Copy as fallback)."""
-        for attempt in ("Copy2", "Copy"):
-            try:
-                if attempt == "Copy2":
-                    return body.Copy2(False)
-                return body.Copy()
-            except Exception as e:
-                logger.debug(f"body.{attempt} failed: {e}")
-        return None
+        """Return a temporary native copy without touching document geometry."""
+        return typed(body, 'IBody2').Copy2(False)
 
     def _intersect_bodies(self, body_a, body_b, k: float) -> Optional[Dict]:
-        """
-        Intersect temp copies of two bodies. Returns {"volume": user_units^3,
-        "bbox": {...}} (zeros/None if no intersection) or None if the check
-        could not run. k = meters -> user units factor.
-        """
-        # Source volumes for the sanity check below
-        def _vol_m3(b):
-            try:
-                mp = com_get(b, "GetMassProperties", 1000.0, default=None)
-                return float(mp[3]) if mp and len(mp) >= 4 else None
-            except Exception:
-                return None
-        vol_a_m3 = _vol_m3(body_a)
-        vol_b_m3 = _vol_m3(body_b)
-
-        copy_a = self._copy_body(body_a)
-        copy_b = self._copy_body(body_b)
-        if copy_a is None or copy_b is None:
+        """Compatibility wrapper; failed native checks return unknown, never zero."""
+        from .body_relations import native_intersection
+        try:
+            result = native_intersection(body_a, body_b)
+            return {'volume': result['volume_mm3']*(k/1000)**3, 'bbox': None}
+        except Exception as exc:
+            logger.debug('Native intersection unavailable: %s', exc)
             return None
-
-        result_bodies = None
-        op = int(SwBodyOperationType.SWBODYINTERSECT)
-        # Typed IBody2 handles the ByRef error-code out-param correctly
-        ta = typed(copy_a, "IBody2")
-        if ta is not None:
-            try:
-                res = ta.Operations2(op, copy_b, 0)
-                # makepy returns (bodies, err) or just bodies
-                if isinstance(res, tuple) and len(res) == 2:
-                    result_bodies, op_err = res
-                    if op_err:
-                        logger.debug(f"Operations2 err={op_err}")
-                else:
-                    result_bodies = res
-            except Exception as e:
-                logger.debug(f"typed Operations2 failed: {e}")
-                return None
-        else:
-            try:
-                err_var = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
-                result_bodies = copy_a.Operations2(op, copy_b, err_var)
-            except Exception as e:
-                logger.debug(f"dynamic Operations2 failed: {e}")
-                return None
-
-        if not result_bodies:
-            return {"volume": 0.0, "bbox": None}
-
-        total_vol_m3 = 0.0
-        mins = [math.inf] * 3
-        maxs = [-math.inf] * 3
-        got_box = False
-        for rb in result_bodies:
-            try:
-                mp = com_get(rb, "GetMassProperties", 1000.0, default=None)
-                if mp and len(mp) >= 4:
-                    total_vol_m3 += float(mp[3])
-            except Exception:
-                pass
-            try:
-                box = com_get(rb, "GetBodyBox", default=None)
-                if box and len(box) >= 6:
-                    got_box = True
-                    for i in range(3):
-                        mins[i] = min(mins[i], float(box[i]))
-                        maxs[i] = max(maxs[i], float(box[i + 3]))
-            except Exception:
-                pass
-
-        # Sanity check: a true intersection can never exceed the smaller
-        # source body. If it does, the operation did NOT behave as
-        # INTERSECT (constant mapping surprise) - report "check invalid"
-        # instead of a false interference.
-        if vol_a_m3 is not None and vol_b_m3 is not None:
-            if total_vol_m3 > min(vol_a_m3, vol_b_m3) * 1.001 + 1e-12:
-                logger.warning(
-                    f"Operations2 result volume {total_vol_m3} exceeds "
-                    f"min source volume - not an intersection, discarding")
-                return None
-
-        bbox = None
-        if got_box:
-            bbox = {"min": [round(v * k, 4) for v in mins],
-                    "max": [round(v * k, 4) for v in maxs]}
-        return {"volume": round(total_vol_m3 * k ** 3, 4), "bbox": bbox}

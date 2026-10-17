@@ -228,9 +228,29 @@ class DocumentOperations:
 
             title = self._get_doc_title(doc)
 
+            # OpenDoc6 can return an already loaded document without activating
+            # it. Subsequent tools operate on ActiveDoc, so verify the target.
+            requested=os.path.normcase(os.path.abspath(filepath))
+            active=self._sw_app.ActiveDoc
+            active_path=self._get_doc_path(active) if active is not None else ''
+            activation_status=0
+            if not active_path or os.path.normcase(os.path.abspath(active_path))!=requested:
+                activated,activation_status=typed(self._sw_app,'ISldWorks').ActivateDoc3(
+                    os.path.basename(filepath),False,
+                    resolve_solidworks_constant('swDontRebuildActiveDoc'),0)
+                active=self._sw_app.ActiveDoc
+                active_path=self._get_doc_path(active) if active is not None else ''
+                if activated is None or not active_path or os.path.normcase(os.path.abspath(active_path))!=requested:
+                    return self._error('DOCUMENT_ACTIVATION_FAILED',
+                        'The opened file did not become the active document',
+                        details={'requested_path':filepath,'active_path':active_path,
+                                 'activation_status':activation_status})
+
             return self._result(True, f"Opened: {title}",
                               SwErrors.swSuccess,
-                              {"name": title, "path": filepath})
+                              {"name": title, "path": filepath,
+                               "active_document_verified":True,
+                               "activation_status":activation_status})
 
         except Exception as e:
             logger.error(f"Open document error: {e}\n{traceback.format_exc()}")

@@ -709,8 +709,7 @@ class MoreFeatureOperations:
                        auto_verify: bool = True, unit: str = None) -> Dict:
         """
         Mirror features or bodies about a plane/planar face
-        (InsertMirrorFeature2). Marks: mirror plane mark=2, features/bodies
-        mark=1.
+        (InsertMirrorFeature2). Marks: plane=2, features=1, bodies=256.
         """
         try:
             doc, err = self.get_active_doc()
@@ -743,9 +742,16 @@ class MoreFeatureOperations:
                         return self._result(False,
                             f"Body '{bn}' not found", SwErrors.swSelectionError)
                     try:
-                        body.Select2(True, self._mark_seldata(doc, 1))
-                    except Exception:
-                        pass
+                        selected = bool(typed(body, "IBody2").Select2(
+                            True, self._mark_seldata(doc, 256)))
+                    except Exception as exc:
+                        return self._result(
+                            False, f"Cannot select mirror body '{bn}': {exc}",
+                            SwErrors.swSelectionError)
+                    if not selected:
+                        return self._result(
+                            False, f"Cannot select mirror body '{bn}'",
+                            SwErrors.swSelectionError)
             else:
                 if not self._select_features(doc, seed_features or [],
                                              mark=1, append=True):
