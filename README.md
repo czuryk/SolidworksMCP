@@ -3,7 +3,7 @@
 ## Major Update
 
 From a short description and reference images to **native, editable SOLIDWORKS
-models**. This update brings a new modeling workflow, **a companion agent SKILL**,
+models**. This update brings a new modeling workflow, **[a companion agent SKILL](skills/solidworks-mcp/SKILL.md)**,
 and measured checks from the first draft to the final delivery.
 
 ### 1. Build complete parametric models
@@ -23,6 +23,22 @@ operations report progress, and completed results survive an MCP reconnect.
 Compare the built model with reference images, measure fits and inspect native
 body health. Export SLDPRT, STEP and per-body STL with validation results and
 file hashes. See exactly what passed and what still needs checking.
+
+## Why the companion skill matters
+
+**The skill is a core part of the modeling experience.** The MCP server provides
+CAD tools; the [solidworks-mcp skill](skills/solidworks-mcp/SKILL.md) gives the
+agent the workflow and practical SOLIDWORKS knowledge to use them together.
+
+It guides the agent through planning parametric geometry, checking proportions
+in a fast draft, building native solids, making focused edits and verifying the
+result before export. Tool selection, reusable joint patterns, recovery steps
+and known limitations are included, so you can focus your prompt on the model
+you want instead of explaining the CAD process each time.
+
+**Install the skill alongside the server** to give your agent the modeling
+guidance used throughout this project. [Read the skill](skills/solidworks-mcp/SKILL.md)
+or [follow the installation steps](docs/setup.md#install-the-companion-skill).
 
 [Get started](docs/setup.md) · [Install the skill](docs/setup.md#install-the-companion-skill) ·
 [Modeling guide](docs/modeling-guide.md) · [All tools](docs/tools.md)
