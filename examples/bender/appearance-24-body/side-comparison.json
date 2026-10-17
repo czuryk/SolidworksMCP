@@ -1,0 +1,272 @@
+{
+  "success": true,
+  "message": "Native silhouette compared with the reference",
+  "error_code": 0,
+  "error_name": "swSuccess",
+  "timestamp": "2026-10-06T23:10:25.729713",
+  "data": {
+    "view": "left",
+    "source": "native",
+    "reference": {
+      "path": "../references/side.png",
+      "sha256": "0f714cb9c4e6dd06a7829d848357eb5a006a01a20836efb6154ce3b1429ed7e7",
+      "size_px": [
+        1093,
+        1438
+      ],
+      "bbox_px": [
+        393,
+        52,
+        661,
+        1290
+      ]
+    },
+    "scale_mm_per_px": 0.12116,
+    "scale_source": "height_mm",
+    "align": "bbox",
+    "iou": 0.9059,
+    "reference_size_mm": [
+      32.47,
+      150.0
+    ],
+    "model_size_mm": [
+      31.1,
+      150.0
+    ],
+    "delta_size_mm": [
+      -1.37,
+      0.0
+    ],
+    "tolerance_mm": 1.5,
+    "levels": {
+      "total": 24,
+      "passed": 24,
+      "failed": 0
+    },
+    "worst": [],
+    "profile_columns": [
+      "y_mm",
+      "reference_left",
+      "reference_right",
+      "model_left",
+      "model_right"
+    ],
+    "profile": [
+      [
+        3.03,
+        -10.3,
+        11.39,
+        -10.06,
+        11.15
+      ],
+      [
+        9.21,
+        -6.42,
+        7.63,
+        -6.3,
+        7.39
+      ],
+      [
+        15.51,
+        -1.45,
+        5.82,
+        -1.45,
+        5.69
+      ],
+      [
+        21.81,
+        -0.12,
+        7.03,
+        -0.24,
+        6.79
+      ],
+      [
+        28.11,
+        0.48,
+        7.63,
+        0.24,
+        7.15
+      ],
+      [
+        34.29,
+        0.12,
+        7.27,
+        0.0,
+        7.03
+      ],
+      [
+        40.59,
+        -5.33,
+        6.18,
+        -4.6,
+        5.57
+      ],
+      [
+        46.77,
+        -6.06,
+        4.0,
+        -7.27,
+        4.12
+      ],
+      [
+        53.07,
+        -13.81,
+        13.69,
+        -13.57,
+        13.45
+      ],
+      [
+        59.37,
+        -14.18,
+        14.05,
+        -13.93,
+        13.81
+      ],
+      [
+        65.67,
+        -14.66,
+        14.42,
+        -14.3,
+        14.18
+      ],
+      [
+        71.85,
+        -15.15,
+        14.66,
+        -14.66,
+        14.42
+      ],
+      [
+        78.15,
+        -15.51,
+        15.02,
+        -14.9,
+        14.78
+      ],
+      [
+        84.33,
+        -15.99,
+        15.39,
+        -15.27,
+        15.27
+      ],
+      [
+        90.63,
+        -16.24,
+        15.63,
+        -15.63,
+        15.63
+      ],
+      [
+        96.93,
+        -11.39,
+        10.9,
+        -11.15,
+        11.15
+      ],
+      [
+        103.23,
+        -9.94,
+        8.84,
+        -10.78,
+        9.57
+      ],
+      [
+        109.41,
+        -9.94,
+        10.78,
+        -10.78,
+        10.78
+      ],
+      [
+        115.71,
+        -9.94,
+        16.24,
+        -10.78,
+        15.51
+      ],
+      [
+        121.89,
+        -9.94,
+        15.99,
+        -10.78,
+        15.27
+      ],
+      [
+        128.19,
+        -9.81,
+        10.66,
+        -10.18,
+        10.18
+      ],
+      [
+        134.49,
+        -6.91,
+        7.88,
+        -6.79,
+        6.79
+      ],
+      [
+        140.79,
+        -1.09,
+        1.82,
+        -1.21,
+        1.21
+      ],
+      [
+        146.97,
+        -1.09,
+        1.82,
+        -1.45,
+        1.45
+      ]
+    ],
+    "warnings": [],
+    "method": "native tessellation of the saved bodies against the filled image foreground; x is measured from the alignment axis, positive to the right of the image; through holes are filled like the reference",
+    "cad_entities_created": 0,
+    "images": [
+      {
+        "view": "left",
+        "path": "../../../docs/assets/bender/appearance-side-overlay.png",
+        "kind": "reference_overlay",
+        "legend": "red: model outside the reference; blue: reference not covered by the model"
+      }
+    ],
+    "document_path": "recorded-local-file/Bender_150mm.SLDPRT",
+    "revision": "57d82a15282708bb35696f47f65602fa023279e16a7a8bb4e1d39a2855f075eb",
+    "bodies": [
+      "Torso",
+      "FootLeft",
+      "HandRight",
+      "ToothGrid",
+      "TeethPlate",
+      "LegRight",
+      "EyeRight",
+      "ShoulderLeft",
+      "ShoulderRight",
+      "ArmLeft",
+      "EyeLeft",
+      "AccessDoor",
+      "MouthShadow",
+      "Head",
+      "ArmRight",
+      "DoorButtonRounded",
+      "VisorShadow",
+      "ShoulderShell",
+      "LegLeft",
+      "HandLeft",
+      "VisorHousing",
+      "PupilRight",
+      "FootRight",
+      "PupilLeft"
+    ],
+    "triangles": 81630,
+    "server_elapsed_ms": 4709.041,
+    "activated": false,
+    "executor": {
+      "operation_id": "d57c91c48009427cbe1570777060b6d7",
+      "status": "COMPLETED",
+      "sta_thread_id": 23400
+    }
+  }
+}

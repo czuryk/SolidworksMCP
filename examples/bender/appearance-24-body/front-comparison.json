@@ -1,0 +1,272 @@
+{
+  "success": true,
+  "message": "Native silhouette compared with the reference",
+  "error_code": 0,
+  "error_name": "swSuccess",
+  "timestamp": "2026-10-06T23:10:20.781763",
+  "data": {
+    "view": "front",
+    "source": "native",
+    "reference": {
+      "path": "../references/front.png",
+      "sha256": "3cb5eaa10024429a29d2b96f48d816044b863ca65abe04c0ad92e6e613082ffd",
+      "size_px": [
+        1095,
+        1437
+      ],
+      "bbox_px": [
+        260,
+        47,
+        800,
+        1300
+      ]
+    },
+    "scale_mm_per_px": 0.11971,
+    "scale_source": "height_mm",
+    "align": "bbox",
+    "iou": 0.9157,
+    "reference_size_mm": [
+      64.64,
+      150.0
+    ],
+    "model_size_mm": [
+      63.52,
+      150.0
+    ],
+    "delta_size_mm": [
+      -1.12,
+      0.0
+    ],
+    "tolerance_mm": 1.5,
+    "levels": {
+      "total": 24,
+      "passed": 24,
+      "failed": 0
+    },
+    "worst": [],
+    "profile_columns": [
+      "y_mm",
+      "reference_left",
+      "reference_right",
+      "model_left",
+      "model_right"
+    ],
+    "profile": [
+      [
+        2.99,
+        -22.98,
+        22.98,
+        -22.63,
+        22.63
+      ],
+      [
+        9.22,
+        -19.03,
+        19.03,
+        -19.03,
+        19.03
+      ],
+      [
+        15.56,
+        -16.28,
+        16.16,
+        -16.16,
+        16.16
+      ],
+      [
+        21.79,
+        -16.76,
+        16.64,
+        -16.52,
+        16.52
+      ],
+      [
+        28.01,
+        -16.76,
+        16.52,
+        -16.4,
+        16.4
+      ],
+      [
+        34.36,
+        -16.16,
+        15.92,
+        -15.8,
+        15.8
+      ],
+      [
+        40.58,
+        -32.2,
+        32.08,
+        -31.84,
+        31.84
+      ],
+      [
+        46.81,
+        -31.01,
+        30.89,
+        -30.89,
+        30.89
+      ],
+      [
+        53.03,
+        -30.77,
+        30.53,
+        -30.41,
+        30.41
+      ],
+      [
+        59.38,
+        -31.25,
+        30.89,
+        -30.53,
+        30.53
+      ],
+      [
+        65.6,
+        -31.01,
+        30.53,
+        -30.17,
+        30.17
+      ],
+      [
+        71.83,
+        -29.81,
+        29.45,
+        -28.97,
+        28.97
+      ],
+      [
+        78.17,
+        -27.41,
+        27.06,
+        -26.94,
+        26.94
+      ],
+      [
+        84.4,
+        -23.1,
+        22.87,
+        -22.75,
+        22.75
+      ],
+      [
+        90.62,
+        -19.27,
+        19.15,
+        -18.91,
+        18.91
+      ],
+      [
+        96.97,
+        -12.81,
+        12.81,
+        -12.57,
+        12.57
+      ],
+      [
+        103.19,
+        -11.01,
+        10.89,
+        -10.77,
+        10.77
+      ],
+      [
+        109.42,
+        -11.01,
+        10.89,
+        -10.77,
+        10.77
+      ],
+      [
+        115.64,
+        -14.01,
+        13.77,
+        -13.65,
+        13.65
+      ],
+      [
+        121.99,
+        -11.01,
+        10.89,
+        -10.77,
+        10.77
+      ],
+      [
+        128.21,
+        -10.65,
+        10.65,
+        -10.65,
+        10.65
+      ],
+      [
+        134.44,
+        -7.18,
+        7.42,
+        -6.7,
+        6.7
+      ],
+      [
+        140.78,
+        -1.44,
+        1.44,
+        -1.2,
+        1.2
+      ],
+      [
+        147.01,
+        -1.8,
+        1.8,
+        -1.8,
+        1.8
+      ]
+    ],
+    "warnings": [],
+    "method": "native tessellation of the saved bodies against the filled image foreground; x is measured from the alignment axis, positive to the right of the image; through holes are filled like the reference",
+    "cad_entities_created": 0,
+    "images": [
+      {
+        "view": "front",
+        "path": "../../../docs/assets/bender/appearance-front-overlay.png",
+        "kind": "reference_overlay",
+        "legend": "red: model outside the reference; blue: reference not covered by the model"
+      }
+    ],
+    "document_path": "recorded-local-file/Bender_150mm.SLDPRT",
+    "revision": "57d82a15282708bb35696f47f65602fa023279e16a7a8bb4e1d39a2855f075eb",
+    "bodies": [
+      "Torso",
+      "FootLeft",
+      "HandRight",
+      "ToothGrid",
+      "TeethPlate",
+      "LegRight",
+      "EyeRight",
+      "ShoulderLeft",
+      "ShoulderRight",
+      "ArmLeft",
+      "EyeLeft",
+      "AccessDoor",
+      "MouthShadow",
+      "Head",
+      "ArmRight",
+      "DoorButtonRounded",
+      "VisorShadow",
+      "ShoulderShell",
+      "LegLeft",
+      "HandLeft",
+      "VisorHousing",
+      "PupilRight",
+      "FootRight",
+      "PupilLeft"
+    ],
+    "triangles": 81630,
+    "server_elapsed_ms": 4766.956,
+    "activated": false,
+    "executor": {
+      "operation_id": "3145192c97e344eba98ad2b01ce9f0cf",
+      "status": "COMPLETED",
+      "sta_thread_id": 23400
+    }
+  }
+}

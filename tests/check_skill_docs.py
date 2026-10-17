@@ -26,7 +26,8 @@ NOTE = re.compile(r'deprecat|legacy|replaced by|no longer', re.IGNORECASE)
 def findings(folder):
     public = {tool.name for tool in asyncio.run(server.list_tools())}
     constructors = {name for name in dir(ShapeProgram) if not name.startswith('_')}
-    topics = (set(API) | {'index', 'all', 'templates'} | {'template:' + name for name in TEMPLATES}
+    # The limits topic is added dynamically by model_api_lookup.
+    topics = (set(API) | {'index', 'all', 'templates', 'limits'} | {'template:' + name for name in TEMPLATES}
               | {'model.' + name for name in constructors} | constructors)
     found = []
     for path in [folder / 'SKILL.md'] + sorted((folder / 'reference').glob('*.md')):

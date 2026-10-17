@@ -1,0 +1,922 @@
+{
+  "schema": "solidworks-mcp/model-delivery/v1",
+  "mcp_version": "6.28.0",
+  "source": {
+    "path": "recorded-local-file/bender_retest.SLDPRT",
+    "sha256": "3577a9573273805988fc05b657e880d99ff98d38a340e213f003f35428b29901",
+    "revision": "893f110a4574613a02be64eda7d8313d6e9f968f922c4e4ec73135896103c68b",
+    "configuration": "Default"
+  },
+  "unit": "mm",
+  "files": [
+    {
+      "path": "model.SLDPRT",
+      "kind": "sldprt",
+      "sha256": "3577a9573273805988fc05b657e880d99ff98d38a340e213f003f35428b29901",
+      "size_bytes": 2992788,
+      "inspection": {
+        "container": "SOLIDWORKS_NATIVE",
+        "signature_hex": "DA296D3E00000004",
+        "native_record_offset": 19,
+        "size_bytes": 2992788
+      }
+    },
+    {
+      "path": "model.step",
+      "kind": "step",
+      "sha256": "45708f55e0edfdc3c1e80d6a50f77f3d45ee32fda5bde01e0d65061fa0dcfe92",
+      "size_bytes": 4118828,
+      "inspection": {
+        "format": "ISO-10303-21",
+        "entity_records": 37963,
+        "solid_body_count": 9,
+        "closed_shell_count": 9,
+        "size_bytes": 4118828,
+        "unit": "mm"
+      }
+    },
+    {
+      "path": "stl/ArmL.stl",
+      "kind": "stl",
+      "sha256": "4b201e097c583fde5fa4576a08ddcfc784b25578fcb5238f5ae016aa19d12a99",
+      "size_bytes": 892584,
+      "inspection": {
+        "passed": true,
+        "triangles": 17850,
+        "vertices": 8927,
+        "adjacency_tolerance_mm": 1.78e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 2823.9769153776238,
+        "native_volume_mm3": 2832.3224,
+        "relative_volume_error": 0.0029465164779180018,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 0.019456028259276614,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "ArmL",
+      "tessellation": {
+        "facet_count": 17850,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 10543,
+        "unique_normal_reads": 10543,
+        "unique_fin_reads": 53550,
+        "elapsed_sec": 15.655175,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/ArmR.stl",
+      "kind": "stl",
+      "sha256": "2ec630c58330426e6f29dcbec291c036fb65fb0ae829fc1a2a1049714d0ea36f",
+      "size_bytes": 889984,
+      "inspection": {
+        "passed": true,
+        "triangles": 17798,
+        "vertices": 8901,
+        "adjacency_tolerance_mm": 1.78e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 2823.7913979547743,
+        "native_volume_mm3": 2832.3623,
+        "relative_volume_error": 0.003026061335876935,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 0.019456028259276614,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "ArmR",
+      "tessellation": {
+        "facet_count": 17798,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 10502,
+        "unique_normal_reads": 10502,
+        "unique_fin_reads": 53394,
+        "elapsed_sec": 15.828543,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/EyeL.stl",
+      "kind": "stl",
+      "sha256": "c37ea67d211641e0210ffafb69b45bd5fe5c2e66fd08ecab12d264d15bea75e8",
+      "size_bytes": 159084,
+      "inspection": {
+        "passed": true,
+        "triangles": 3180,
+        "vertices": 1592,
+        "adjacency_tolerance_mm": 2.4089999389648436e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 292.5274945141304,
+        "native_volume_mm3": 293.4458,
+        "relative_volume_error": 0.003129387048203142,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 3.051757815342171e-06,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "EyeL",
+      "tessellation": {
+        "facet_count": 3180,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 1930,
+        "unique_normal_reads": 1930,
+        "unique_fin_reads": 9540,
+        "elapsed_sec": 2.774259,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/EyeR.stl",
+      "kind": "stl",
+      "sha256": "05d8775925c7a441b5276a2030e2341a2a02f867d895a6bdf01f9b453b3caccf",
+      "size_bytes": 159184,
+      "inspection": {
+        "passed": true,
+        "triangles": 3182,
+        "vertices": 1593,
+        "adjacency_tolerance_mm": 2.4089999389648436e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 292.52786313360735,
+        "native_volume_mm3": 293.4447,
+        "relative_volume_error": 0.0031243940217446664,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 3.051757815342171e-06,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "EyeR",
+      "tessellation": {
+        "facet_count": 3182,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 1931,
+        "unique_normal_reads": 1931,
+        "unique_fin_reads": 9546,
+        "elapsed_sec": 2.870225,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/Head.stl",
+      "kind": "stl",
+      "sha256": "30d30abde46c6b9c45bb882340db3b889be182b9ec5233b6275bcafff3f94f8f",
+      "size_bytes": 363184,
+      "inspection": {
+        "passed": true,
+        "triangles": 7262,
+        "vertices": 3633,
+        "adjacency_tolerance_mm": 2.9999999999999997e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 13240.362371303825,
+        "native_volume_mm3": 13261.4374,
+        "relative_volume_error": 0.001589196409144581,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 3.05175787218559e-06,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "Head",
+      "tessellation": {
+        "facet_count": 7262,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 5088,
+        "unique_normal_reads": 5088,
+        "unique_fin_reads": 21786,
+        "elapsed_sec": 6.944036,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/LegL.stl",
+      "kind": "stl",
+      "sha256": "a87ae3734f3b789fb34635647ba4e1d1bde260ae4c769ed09b0ac88326da4c07",
+      "size_bytes": 562984,
+      "inspection": {
+        "passed": true,
+        "triangles": 11258,
+        "vertices": 5631,
+        "adjacency_tolerance_mm": 1.0840000152587891e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 4827.931340098206,
+        "native_volume_mm3": 4839.3884,
+        "relative_volume_error": 0.002367460297626328,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 0.004910864415574423,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "LegL",
+      "tessellation": {
+        "facet_count": 11258,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 6577,
+        "unique_normal_reads": 6577,
+        "unique_fin_reads": 33774,
+        "elapsed_sec": 9.654858,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/LegR.stl",
+      "kind": "stl",
+      "sha256": "381e6efe8945de500dd9acfd25f91d0a60495d766fd017cb5fc8e657a481fe71",
+      "size_bytes": 563084,
+      "inspection": {
+        "passed": true,
+        "triangles": 11260,
+        "vertices": 5632,
+        "adjacency_tolerance_mm": 1.0840000152587891e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 4827.9318204362935,
+        "native_volume_mm3": 4839.3618,
+        "relative_volume_error": 0.00236187746155003,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 0.004910864415574423,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "LegR",
+      "tessellation": {
+        "facet_count": 11260,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 6578,
+        "unique_normal_reads": 6578,
+        "unique_fin_reads": 33780,
+        "elapsed_sec": 9.712938,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/Teeth.stl",
+      "kind": "stl",
+      "sha256": "209359442f9190b5485366db4ac704d43cc74df8d3d80c08c0a2d990c83d238d",
+      "size_bytes": 29484,
+      "inspection": {
+        "passed": true,
+        "triangles": 588,
+        "vertices": 296,
+        "adjacency_tolerance_mm": 2.136000061035156e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 225.2541363509938,
+        "native_volume_mm3": 224.9462,
+        "relative_volume_error": 0.0013689333315868378,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 3.051757857974735e-06,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "Teeth",
+      "tessellation": {
+        "facet_count": 588,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 760,
+        "unique_normal_reads": 760,
+        "unique_fin_reads": 1764,
+        "elapsed_sec": 0.643473,
+        "command_in_progress": true
+      }
+    },
+    {
+      "path": "stl/Torso.stl",
+      "kind": "stl",
+      "sha256": "87cc5afc3c583ed10a5be0effcb6f50bd8d5d0e263db4965055c4e590121e518",
+      "size_bytes": 314584,
+      "inspection": {
+        "passed": true,
+        "triangles": 6290,
+        "vertices": 3147,
+        "adjacency_tolerance_mm": 1.9589999389648438e-05,
+        "boundary_edges": 0,
+        "nonmanifold_edges": 0,
+        "inconsistent_edges": 0,
+        "nonmanifold_vertices": 0,
+        "degenerate_triangles": 0,
+        "duplicate_triangles": 0,
+        "signed_volume_mm3": 36853.49185574183,
+        "native_volume_mm3": 36869.2008,
+        "relative_volume_error": 0.00042607227488833876,
+        "relative_volume_tolerance": 0.01,
+        "bbox_max_delta_mm": 9.298770223153952e-05,
+        "bbox_tolerance_mm": 0.04,
+        "self_intersections": "NOT_CHECKED",
+        "repair_performed": false
+      },
+      "body": "Torso",
+      "tessellation": {
+        "facet_count": 6290,
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "deviation_m": 2e-05,
+        "angle_tolerance_rad": 0.17453292519943295,
+        "unique_vertex_reads": 4945,
+        "unique_normal_reads": 4945,
+        "unique_fin_reads": 18870,
+        "elapsed_sec": 5.867214,
+        "command_in_progress": true
+      }
+    }
+  ],
+  "native_inspection": {
+    "document_path": "recorded-local-file/bender_retest.SLDPRT",
+    "revision": "893f110a4574613a02be64eda7d8313d6e9f968f922c4e4ec73135896103c68b",
+    "configuration": "Default",
+    "unit": "mm",
+    "bodies": [
+      {
+        "name": "LegR",
+        "visible": true,
+        "face_count": 25,
+        "bbox": {
+          "min": [
+            -23.007754721227098,
+            0.0,
+            -10.8077547212271
+          ],
+          "max": [
+            -1.092245278772898,
+            54.199999999999996,
+            11.1077547212271
+          ]
+        },
+        "volume": 4839.3618,
+        "volume_exact": 4839.361825302234,
+        "surface_area": 2151.5016,
+        "center_of_mass": [
+          -11.7864,
+          14.172,
+          1.1171
+        ],
+        "dimensions_mm": [
+          21.9155094424542,
+          54.199999999999996,
+          21.9155094424542
+        ],
+        "components": [
+          {
+            "name": "LegR",
+            "id": "3b0c657f92ec488287923b01a90d3909:LegR",
+            "declared_recipe": "mirror",
+            "native_feature_type": "MirrorSolid"
+          }
+        ],
+        "surface_types": {
+          "plane": 8,
+          "bspline": 13,
+          "cylinder": 4
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "EyeR",
+        "visible": true,
+        "face_count": 17,
+        "bbox": {
+          "min": [
+            -9.400000499999999,
+            112.95,
+            2.2499999999999942
+          ],
+          "max": [
+            -0.40000049999999904,
+            120.44999999999999,
+            12.612498686466363
+          ]
+        },
+        "volume": 293.4447,
+        "volume_exact": 293.44474432812024,
+        "surface_area": 257.4391,
+        "center_of_mass": [
+          -4.8943,
+          116.6324,
+          8.2096
+        ],
+        "dimensions_mm": [
+          9.0,
+          7.499999999999986,
+          10.362498686466369
+        ],
+        "components": [
+          {
+            "name": "EyeR",
+            "id": "3b0c657f92ec488287923b01a90d3909:EyeR",
+            "declared_recipe": "mirror",
+            "native_feature_type": "MirrorSolid"
+          }
+        ],
+        "surface_types": {
+          "bspline": 2,
+          "plane": 11,
+          "cylinder": 4
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "ArmL",
+        "visible": true,
+        "face_count": 44,
+        "bbox": {
+          "min": [
+            6.25,
+            37.100000000000016,
+            -11.25995671613979
+          ],
+          "max": [
+            32.4,
+            89.00000000000006,
+            4.600000499999999
+          ]
+        },
+        "volume": 2832.3224,
+        "volume_exact": 2832.322382835983,
+        "surface_area": 1719.8875,
+        "center_of_mass": [
+          22.8846,
+          65.6459,
+          -4.6447
+        ],
+        "dimensions_mm": [
+          26.15,
+          51.90000000000004,
+          15.85995721613979
+        ],
+        "components": [
+          {
+            "name": "ArmL",
+            "id": "3b0c657f92ec488287923b01a90d3909:ArmL",
+            "declared_recipe": "combine",
+            "native_feature_type": "CombineBodies"
+          }
+        ],
+        "surface_types": {
+          "plane": 12,
+          "cylinder": 11,
+          "bspline": 15,
+          "cone": 2,
+          "sphere": 4
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "Torso",
+        "visible": true,
+        "face_count": 67,
+        "bbox": {
+          "min": [
+            -19.399999999999952,
+            48.199999999999946,
+            -15.94999999999995
+          ],
+          "max": [
+            19.39999999999995,
+            97.95000000000005,
+            15.978971962616782
+          ]
+        },
+        "volume": 36869.2008,
+        "volume_exact": 36869.20080462976,
+        "surface_area": 7170.5801,
+        "center_of_mass": [
+          0.0006,
+          73.2032,
+          0.3193
+        ],
+        "dimensions_mm": [
+          38.7999999999999,
+          49.7500000000001,
+          31.928971962616732
+        ],
+        "components": [
+          {
+            "name": "Torso",
+            "id": "3b0c657f92ec488287923b01a90d3909:Torso",
+            "declared_recipe": "combine",
+            "native_feature_type": "CombineBodies"
+          }
+        ],
+        "surface_types": {
+          "plane": 37,
+          "bspline": 3,
+          "other": 4,
+          "sphere": 1,
+          "cylinder": 22
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "ArmR",
+        "visible": true,
+        "face_count": 44,
+        "bbox": {
+          "min": [
+            -32.4,
+            37.100000000000016,
+            -11.25995671613979
+          ],
+          "max": [
+            -6.25,
+            89.00000000000006,
+            4.600000499999999
+          ]
+        },
+        "volume": 2832.3623,
+        "volume_exact": 2832.3622911619727,
+        "surface_area": 1719.8967,
+        "center_of_mass": [
+          -22.8846,
+          65.6459,
+          -4.6448
+        ],
+        "dimensions_mm": [
+          26.15,
+          51.90000000000004,
+          15.85995721613979
+        ],
+        "components": [
+          {
+            "name": "ArmR",
+            "id": "3b0c657f92ec488287923b01a90d3909:ArmR",
+            "declared_recipe": "mirror",
+            "native_feature_type": "MirrorSolid"
+          }
+        ],
+        "surface_types": {
+          "plane": 12,
+          "cylinder": 11,
+          "bspline": 15,
+          "cone": 2,
+          "sphere": 4
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "EyeL",
+        "visible": true,
+        "face_count": 17,
+        "bbox": {
+          "min": [
+            0.4000004999999999,
+            112.95,
+            2.2499999999999942
+          ],
+          "max": [
+            9.4000005,
+            120.44999999999999,
+            12.612498686466363
+          ]
+        },
+        "volume": 293.4458,
+        "volume_exact": 293.4458349144668,
+        "surface_area": 257.4403,
+        "center_of_mass": [
+          4.8943,
+          116.6324,
+          8.2096
+        ],
+        "dimensions_mm": [
+          9.000000000000002,
+          7.499999999999986,
+          10.362498686466369
+        ],
+        "components": [
+          {
+            "name": "EyeL",
+            "id": "3b0c657f92ec488287923b01a90d3909:EyeL",
+            "declared_recipe": "combine",
+            "native_feature_type": "CombineBodies"
+          }
+        ],
+        "surface_types": {
+          "bspline": 2,
+          "plane": 11,
+          "cylinder": 4
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "Head",
+        "visible": true,
+        "face_count": 72,
+        "bbox": {
+          "min": [
+            -13.899999999999965,
+            92.20000000000006,
+            -10.699999999999996
+          ],
+          "max": [
+            13.900000000000006,
+            149.99999999999955,
+            15.899999999999956
+          ]
+        },
+        "volume": 13261.4374,
+        "volume_exact": 13261.437408754306,
+        "surface_area": 4811.8713,
+        "center_of_mass": [
+          0.0,
+          116.1804,
+          0.0621
+        ],
+        "dimensions_mm": [
+          27.79999999999997,
+          57.799999999999486,
+          26.59999999999995
+        ],
+        "components": [
+          {
+            "name": "Head",
+            "id": "3b0c657f92ec488287923b01a90d3909:Head",
+            "declared_recipe": "combine",
+            "native_feature_type": "CombineBodies"
+          }
+        ],
+        "surface_types": {
+          "cylinder": 28,
+          "plane": 32,
+          "torus": 8,
+          "sphere": 3,
+          "cone": 1
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "Teeth",
+        "visible": true,
+        "face_count": 86,
+        "bbox": {
+          "min": [
+            -7.536242096921657,
+            99.79999999999995,
+            4.014988014229127
+          ],
+          "max": [
+            7.536242096921657,
+            106.80000000000001,
+            9.196602633581609
+          ]
+        },
+        "volume": 224.9462,
+        "volume_exact": 224.94617294076627,
+        "surface_area": 364.7758,
+        "center_of_mass": [
+          -0.0,
+          103.3,
+          6.8967
+        ],
+        "dimensions_mm": [
+          15.072484193843314,
+          7.000000000000057,
+          5.181614619352482
+        ],
+        "components": [
+          {
+            "name": "Teeth",
+            "id": "3b0c657f92ec488287923b01a90d3909:Teeth",
+            "declared_recipe": "combine",
+            "native_feature_type": "CombineBodies"
+          }
+        ],
+        "surface_types": {
+          "cylinder": 29,
+          "plane": 57
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      {
+        "name": "LegL",
+        "visible": true,
+        "face_count": 25,
+        "bbox": {
+          "min": [
+            1.092245278772898,
+            0.0,
+            -10.8077547212271
+          ],
+          "max": [
+            23.007754721227098,
+            54.199999999999996,
+            11.1077547212271
+          ]
+        },
+        "volume": 4839.3884,
+        "volume_exact": 4839.388403531499,
+        "surface_area": 2151.498,
+        "center_of_mass": [
+          11.7864,
+          14.1719,
+          1.1171
+        ],
+        "dimensions_mm": [
+          21.9155094424542,
+          54.199999999999996,
+          21.9155094424542
+        ],
+        "components": [
+          {
+            "name": "LegL",
+            "id": "3b0c657f92ec488287923b01a90d3909:LegL",
+            "declared_recipe": "combine",
+            "native_feature_type": "CombineBodies"
+          }
+        ],
+        "surface_types": {
+          "plane": 8,
+          "bspline": 13,
+          "cylinder": 4
+        },
+        "bbox_method": "IBody2.GetExtremePoint",
+        "kernel_health": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      }
+    ],
+    "bbox": {
+      "min": [
+        -32.4,
+        0.0,
+        -15.94999999999995
+      ],
+      "max": [
+        32.4,
+        149.99999999999955,
+        15.978971962616782
+      ]
+    },
+    "bbox_method": "IBody2.GetExtremePoint",
+    "parameters": {
+      "H": 150.0,
+      "Clr": 0.25
+    },
+    "sections": [],
+    "body_pairs": [],
+    "acceptance": "MEASURED_NOT_DELIVERY_VALIDATED",
+    "cad_entities_created": 0
+  },
+  "stl_settings": {
+    "backend": "solidworks_itessellation",
+    "unit": "mm",
+    "meters_to_unit": 1000.0,
+    "quality": "custom",
+    "binary": true,
+    "preserve_origin": true,
+    "deviation_mm": 0.02,
+    "angle_tolerance_deg": 10.0,
+    "max_triangles": 1000000,
+    "improved_quality": true,
+    "preferences_mutated": false,
+    "modal_preview_disabled": true
+  },
+  "mesh_cleanup": "none",
+  "acceptance": {
+    "status": "EXPORT_VALIDATED",
+    "native_kernel": "PASS",
+    "mesh_structure": "PASS",
+    "shape_likeness": "NOT_CHECKED",
+    "native_parameter_cycle": "NOT_CHECKED",
+    "manufacturing_clearances": "NOT_CHECKED",
+    "wall_thickness": "NOT_CHECKED",
+    "mesh_self_intersections": "NOT_CHECKED",
+    "unity_rig": "NOT_CHECKED"
+  },
+  "native_copy": "identical_saved_bytes",
+  "commit_method": "replace_own_delivery_rename"
+}
