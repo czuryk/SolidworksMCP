@@ -27,6 +27,22 @@ file hashes. See exactly what passed and what still needs checking.
 [Get started](docs/setup.md) · [Install the skill](docs/setup.md#install-the-companion-skill) ·
 [Modeling guide](docs/modeling-guide.md) · [All tools](docs/tools.md)
 
+<details>
+<summary>Main tools</summary>
+
+- [`get_model_context`](docs/tools.md#get_model_context) — Read the active model, parameters, bodies and editable source.
+- [`model_api_lookup`](docs/tools.md#model_api_lookup) — Find modeling commands, examples and ready-to-use joint templates.
+- [`execute_model_code`](docs/tools.md#execute_model_code) — Preview, build, edit or revert a native parametric model.
+- [`observe_model`](docs/tools.md#observe_model) — Capture native views, custom camera angles and close-ups.
+- [`measure_reference`](docs/tools.md#measure_reference) — Measure dimensions and selected details in a reference image.
+- [`compare_reference`](docs/tools.md#compare_reference) — Compare model proportions with a reference image and highlight deviations.
+- [`inspect_model`](docs/tools.md#inspect_model) — Check native geometry, dimensions, fits and printability.
+- [`export_model`](docs/tools.md#export_model) — Export validated SLDPRT, STEP and per-body STL with a results manifest.
+
+[And more.](docs/tools.md)
+
+</details>
+
 ## Built with SolidworksMCP
 
 ![Bender built as native SOLIDWORKS solids](docs/assets/bender/appearance-hero.png)
