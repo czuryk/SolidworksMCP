@@ -1,0 +1,570 @@
+{
+  "issue": "https://github.com/czuryk/SolidworksMCP/issues/1",
+  "reporter_fix": "https://github.com/czuryk/SolidworksMCP/issues/1#issuecomment-5639563463",
+  "date": "2026-10-17T11:19:17.831823+00:00",
+  "status": "PASS",
+  "environment": {
+    "server_version": "6.30.0rc1",
+    "solidworks": "2026 SP2.1",
+    "api_revision": "34.2.1.2",
+    "locale_test": "Renamed native planes; not a Polish UI installation"
+  },
+  "baseline": {
+    "server_commit": "8610421e6ae72b726528aa7ad63b49079cedc189",
+    "english_front_success": true,
+    "renamed_planes": [
+      "Przod_Issue1",
+      "Gora_Issue1",
+      "Prawa_Issue1"
+    ],
+    "renamed_front_success": false,
+    "message": "Could not select Front Plane",
+    "error_code": 104,
+    "structured_error": {
+      "code": "COM_MEMBER_MISMATCH",
+      "message": "Could not select Front Plane",
+      "stage": "com_call",
+      "recoverable": true,
+      "document_restored": null,
+      "com_hresult": null,
+      "likely_causes": [],
+      "conflicting_entities": [],
+      "recommended_actions": [],
+      "debug_artifacts": [],
+      "details": {
+        "legacy_error_code": 104,
+        "legacy_error_name": "swSelectionError"
+      }
+    }
+  },
+  "source_sha256_at_execution": {
+    "solidworks_mcp/automation/com_utils.py": "b321ffd020182108ff9cf7ed1514bc72bc9a3aa2301e995096b814a732cb7fc5",
+    "solidworks_mcp/automation/sketches.py": "1a783a884dcf41baf47a2e97e21bb48f1dffc60202e9abe63819ae3a2a98e41d",
+    "solidworks_mcp/automation/shape_native.py": "f6c7922490cc02e05480bacaf51785bd1e2dc9b31ceb49e3c315d3e91d0ff40a",
+    "tests/live_standard_planes.py": "03f818060044476d1e8b6060435d341f41de17e4a749fde9f156cae078a25586"
+  },
+  "source_sha256_normalized_lf": {
+    "solidworks_mcp/automation/com_utils.py": "3b7ec00476da98d38f2b4c9b20678520e83e4e9a08fe090601f97e7b84e04a28",
+    "solidworks_mcp/automation/sketches.py": "1a783a884dcf41baf47a2e97e21bb48f1dffc60202e9abe63819ae3a2a98e41d",
+    "solidworks_mcp/automation/shape_native.py": "acbd80b4c1dd98e059f87a22b4ce3e459debf0ce40b0ca897a82b11e7ca3bf00",
+    "tests/live_standard_planes.py": "03f818060044476d1e8b6060435d341f41de17e4a749fde9f156cae078a25586"
+  },
+  "source_note": "The executed sources are byte-hashed above; normalized hashes match Git LF storage. The server tool-description wording was subsequently updated without changing dispatch or native behavior.",
+  "tolerance_mm": 1e-06,
+  "native_cases": [
+    {
+      "locale": "english",
+      "plane": "Front",
+      "plane_names": [
+        "Front Plane",
+        "Top Plane",
+        "Right Plane"
+      ],
+      "selection": {
+        "requested_plane": "Front",
+        "resolved_name": "Front Plane",
+        "lookup": "feature_tree_order",
+        "method": "IFeature.Select2"
+      },
+      "sketch_normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "before_save": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "max": [
+            100.0,
+            50.0,
+            20.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          50.0,
+          20.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "after_reopen": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "max": [
+            100.0,
+            50.0,
+            20.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          50.0,
+          20.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "artifacts": {
+        "issue1_english_Front.SLDPRT": {
+          "bytes": 51248,
+          "sha256": "adbae2d65e43f707fe3ce25ff99b9bbba8f081e92eb50e764a78c1ca46ff3932"
+        },
+        "issue1_english_Front.step": {
+          "bytes": 15887,
+          "sha256": "b4a2a7a08400ea6496eb7077c9a976e8a7a585f691494330f51f732db41dba5f"
+        }
+      }
+    },
+    {
+      "locale": "english",
+      "plane": "Top",
+      "plane_names": [
+        "Front Plane",
+        "Top Plane",
+        "Right Plane"
+      ],
+      "selection": {
+        "requested_plane": "Top",
+        "resolved_name": "Top Plane",
+        "lookup": "feature_tree_order",
+        "method": "IFeature.Select2"
+      },
+      "sketch_normal": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "before_save": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -50.0
+          ],
+          "max": [
+            100.0,
+            20.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          20.0,
+          50.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "after_reopen": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -50.0
+          ],
+          "max": [
+            100.0,
+            20.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          20.0,
+          50.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "artifacts": {
+        "issue1_english_Top.SLDPRT": {
+          "bytes": 54259,
+          "sha256": "fcc50d5566b44b03b0a20722db393946363f27ef39f05e1b3443fe4710b9a849"
+        },
+        "issue1_english_Top.step": {
+          "bytes": 15886,
+          "sha256": "4e19abbe5fffe0c22c6a0830f70df351c2c93057b080817cbb12502a2802f049"
+        }
+      }
+    },
+    {
+      "locale": "english",
+      "plane": "Right",
+      "plane_names": [
+        "Front Plane",
+        "Top Plane",
+        "Right Plane"
+      ],
+      "selection": {
+        "requested_plane": "Right",
+        "resolved_name": "Right Plane",
+        "lookup": "feature_tree_order",
+        "method": "IFeature.Select2"
+      },
+      "sketch_normal": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "before_save": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -100.0
+          ],
+          "max": [
+            20.0,
+            50.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          20.0,
+          50.0,
+          100.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "after_reopen": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -100.0
+          ],
+          "max": [
+            20.0,
+            50.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          20.0,
+          50.0,
+          100.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "artifacts": {
+        "issue1_english_Right.SLDPRT": {
+          "bytes": 50612,
+          "sha256": "9a190307d5eade9f8ba585a0f446852d289d3bed34d2c136f6096d74bfc35a22"
+        },
+        "issue1_english_Right.step": {
+          "bytes": 15895,
+          "sha256": "a86b8d7b0eb2c62bf48f2152bcca7c041b0af7a657e7235f1ffd9caf0ea393e2"
+        }
+      }
+    },
+    {
+      "locale": "polish",
+      "plane": "Front",
+      "plane_names": [
+        "Płaszczyzna przednia",
+        "Płaszczyzna górna",
+        "Płaszczyzna prawa"
+      ],
+      "selection": {
+        "requested_plane": "Front",
+        "resolved_name": "Płaszczyzna przednia",
+        "lookup": "feature_tree_order",
+        "method": "IFeature.Select2"
+      },
+      "sketch_normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "before_save": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "max": [
+            100.0,
+            50.0,
+            20.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          50.0,
+          20.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "after_reopen": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "max": [
+            100.0,
+            50.0,
+            20.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          50.0,
+          20.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "artifacts": {
+        "issue1_polish_Front.SLDPRT": {
+          "bytes": 50613,
+          "sha256": "c805379807b9fcf26d53da7ace8c18766c1b8e7f335bb3a73b27b4b9a3e6e9fb"
+        },
+        "issue1_polish_Front.step": {
+          "bytes": 15883,
+          "sha256": "cb2421214c89323220bc0b78a83441ccd11285faa49ff1937bba1192dc423e14"
+        }
+      }
+    },
+    {
+      "locale": "polish",
+      "plane": "Top",
+      "plane_names": [
+        "Płaszczyzna przednia",
+        "Płaszczyzna górna",
+        "Płaszczyzna prawa"
+      ],
+      "selection": {
+        "requested_plane": "Top",
+        "resolved_name": "Płaszczyzna górna",
+        "lookup": "feature_tree_order",
+        "method": "IFeature.Select2"
+      },
+      "sketch_normal": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "before_save": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -50.0
+          ],
+          "max": [
+            100.0,
+            20.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          20.0,
+          50.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "after_reopen": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -50.0
+          ],
+          "max": [
+            100.0,
+            20.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          100.0,
+          20.0,
+          50.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "artifacts": {
+        "issue1_polish_Top.SLDPRT": {
+          "bytes": 54783,
+          "sha256": "7e45df57e136cdc37b3a73f59525fa14b9f77fc880fc50ed06d4f81170befbee"
+        },
+        "issue1_polish_Top.step": {
+          "bytes": 15895,
+          "sha256": "2cfa8df956cf8ec8ed60f5c6427bc220fd827b00ee3bab95c17d683dd71658aa"
+        }
+      }
+    },
+    {
+      "locale": "polish",
+      "plane": "Right",
+      "plane_names": [
+        "Płaszczyzna przednia",
+        "Płaszczyzna górna",
+        "Płaszczyzna prawa"
+      ],
+      "selection": {
+        "requested_plane": "Right",
+        "resolved_name": "Płaszczyzna prawa",
+        "lookup": "feature_tree_order",
+        "method": "IFeature.Select2"
+      },
+      "sketch_normal": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "before_save": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -100.0
+          ],
+          "max": [
+            20.0,
+            50.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          20.0,
+          50.0,
+          100.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "after_reopen": {
+        "body_count": 1,
+        "face_count": 6,
+        "bbox_mm": {
+          "min": [
+            0.0,
+            0.0,
+            -100.0
+          ],
+          "max": [
+            20.0,
+            50.0,
+            0.0
+          ]
+        },
+        "size_mm": [
+          20.0,
+          50.0,
+          100.0
+        ],
+        "kernel": {
+          "method": "IBody2.Check3",
+          "fault_count": 0,
+          "passed": true
+        }
+      },
+      "artifacts": {
+        "issue1_polish_Right.SLDPRT": {
+          "bytes": 51561,
+          "sha256": "717f06e6751da17c7443dada191a6a2a904ef34403a17018601aaa59e84231dd"
+        },
+        "issue1_polish_Right.step": {
+          "bytes": 15900,
+          "sha256": "53a140e9276a98d14d95d61b67124eee698048494bd23d09d76767b197b96275"
+        }
+      }
+    }
+  ],
+  "checks": [
+    "resolved plane name",
+    "sketch normal and Normal To",
+    "100 x 50 mm rectangle and 20 mm extrusion",
+    "one solid body and six faces",
+    "IBody2.GetExtremePoint bounds",
+    "IBody2.Check3 zero faults",
+    "save and reopen with identical native facts",
+    "STEP header and MANIFOLD_SOLID_BREP"
+  ],
+  "limits": [
+    "Renamed-plane coverage on SP2.1; Polish SP3.2 was not run locally.",
+    "AccessSelections diagnostic mismatch is outside this fix.",
+    "CAD artifacts and full local call logs are not distributed; their hashes identify this run."
+  ],
+  "offline_tests": {
+    "command": "python -m unittest discover -s tests -p \"test_*.py\"",
+    "tests": 714,
+    "seconds": 61.161,
+    "status": "PASS",
+    "new_regression_tests": 10
+  }
+}

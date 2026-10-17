@@ -557,8 +557,11 @@ def _all_tools() -> list[Tool]:
         # -------------------- Sketch --------------------
         Tool(
             name="create_sketch",
-            description="Create a new sketch on a standard plane (Front/Top/Right) "
-                        "with geometrically verified Normal To and Fit to Screen.",
+            description="Create a new sketch on a standard plane (Front/Top/Right), "
+                        "including localized or renamed planes, with geometrically verified "
+                        "Normal To and Fit to Screen. Resolves native RefPlane features in "
+                        "tree order and selects the feature directly; selection diagnostics "
+                        "include the resolved name and method.",
             inputSchema={
                 "type": "object",
                 "properties": {

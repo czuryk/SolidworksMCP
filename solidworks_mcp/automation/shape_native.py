@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from .com_utils import (com_get, typed, array_r8, create_select_data,
-                        feature_face_count)
+                        feature_face_count, standard_plane_features)
 from ..shape_program import ProgramError
 from ..constants import SwPlanes
 
@@ -53,13 +53,7 @@ class NativeCompiler:
         """
         planes = getattr(self, '_standard_planes', None)
         if planes is None:
-            found = []
-            for feature in self.a._walk_features(self.doc, include_sub=False):
-                if str(com_get(feature, 'GetTypeName2', default='')) == 'RefPlane':
-                    found.append(feature)
-                    if len(found) == 3:
-                        break
-            planes = self._standard_planes = dict(zip(('Front', 'Top', 'Right'), found)) if len(found) == 3 else {}
+            planes = self._standard_planes = standard_plane_features(self.a, self.doc)
         feature = planes.get(which) or self.a._find_feature(self.doc, which + ' Plane')
         self.require(feature is not None, 'Cannot find the standard ' + which + ' plane')
         return feature

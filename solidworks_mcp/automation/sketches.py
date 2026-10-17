@@ -13,6 +13,8 @@ import win32com.client
 import pythoncom
 
 from ..constants import SwErrors, SwPlanes
+from .com_utils import com_get, is_rpc_disconnect, standard_plane_features
+from .runtime import structured_error
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,19 @@ class SketchOperations:
     - _result(): Result factory method
     - _units: UnitConverter instance
     """
+
+    def _sketch_plane_error(self, code, message, selection, exception=None):
+        """Keep a failed lookup/selection distinct from a COM binding mismatch."""
+        return self._result(
+            False, message, SwErrors.swSelectionError,
+            {"sketch_created": False, "selection": selection,
+             "error": structured_error(
+                 code, message, stage="plane_selection", recoverable=True,
+                 com_hresult=getattr(exception, "hresult", None),
+                 details=dict(selection),
+                 recommended_actions=[
+                     {"tool": "list_features", "arguments": {},
+                      "reason": "Inspect the standard reference planes in the active document."}])})
 
     def _prepare_sketch_geometry_view(self, doc, operation: str) -> Dict:
         """Require a verified face-on sketch view before adding geometry."""
@@ -74,20 +89,37 @@ class SketchOperations:
             if err:
                 return err
 
-            # Get plane name
+            # Standard planes are positional features, not English display names.
             plane_name = SwPlanes.get(plane)
-
-            # Create empty variant for callout parameter
-            empty_callout = win32com.client.VARIANT(pythoncom.VT_DISPATCH, None)
-
-            # Select plane
-            result = doc.Extension.SelectByID2(
-                plane_name, "PLANE", 0, 0, 0, False, 0, empty_callout, 0
-            )
-
-            if not result:
-                return self._result(False, f"Could not select {plane_name}",
-                                  SwErrors.swSelectionError)
+            requested_plane = plane_name.removesuffix(" Plane")
+            selection = {"requested_plane": requested_plane,
+                         "resolved_name": None, "lookup": "feature_tree_order",
+                         "method": "IFeature.Select2"}
+            try:
+                feature = standard_plane_features(self, doc).get(requested_plane)
+                if feature is None:
+                    selection["lookup"] = "english_name_fallback"
+                    feature = self._find_feature(doc, plane_name)
+                    if feature is not None and str(com_get(
+                            feature, "GetTypeName2", default="")) != "RefPlane":
+                        feature = None
+                if feature is None:
+                    return self._sketch_plane_error(
+                        "STANDARD_PLANE_NOT_FOUND",
+                        f"Could not find the standard {requested_plane} plane", selection)
+                plane_name = str(com_get(feature, "Name"))
+                selection["resolved_name"] = plane_name
+                doc.ClearSelection2(True)
+                if not feature.Select2(False, 0):
+                    return self._sketch_plane_error(
+                        "PLANE_SELECTION_FAILED", f"Could not select {plane_name}", selection)
+            except Exception as exc:
+                if is_rpc_disconnect(exc):
+                    raise
+                return self._sketch_plane_error(
+                    "PLANE_SELECTION_FAILED",
+                    f"Could not select the standard {requested_plane} plane: {exc}",
+                    selection, exc)
 
             # Insert sketch
             doc.InsertSketch2(True)
@@ -101,14 +133,17 @@ class SketchOperations:
                     "verification failed",
                     SwErrors.swSketchError,
                     {"plane": plane_name, "sketch_created": True,
+                     "selection": selection,
                      "orientation": orientation.get("data", orientation)})
 
             return self._result(True, f"Sketch created on {plane_name}",
                               SwErrors.swSuccess,
-                              {"plane": plane_name,
+                              {"plane": plane_name, "selection": selection,
                                "orientation": orientation.get("data", {})})
 
         except Exception as e:
+            if is_rpc_disconnect(e):
+                raise
             logger.error(f"Create sketch error: {e}\n{traceback.format_exc()}")
             return self._result(False, f"Error: {e}", SwErrors.swSketchError)
 

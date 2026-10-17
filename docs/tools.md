@@ -753,7 +753,7 @@ DEPRECATED: use create_revolved_body, create_swept_member, create_multibody_inse
 
 ### create_sketch
 
-Create a new sketch on a standard plane (Front/Top/Right) with geometrically verified Normal To and Fit to Screen.
+Create a new sketch on a standard plane (Front/Top/Right), including localized or renamed planes, with geometrically verified Normal To and Fit to Screen. Resolves native RefPlane features in tree order and selects the feature directly; selection diagnostics include the resolved name and method.
 
 | Input | Type | Required | Default | Description and constraints |
 |---|---|---|---|---|

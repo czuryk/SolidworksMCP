@@ -42,6 +42,21 @@ def is_rpc_disconnect(exc):
     return getattr(exc, 'hresult', None) in RPC_DISCONNECT_HRESULTS
 
 
+def standard_plane_features(automation, doc):
+    """Resolve Front/Top/Right by the first three top-level RefPlane features.
+
+    Names vary by language and can be renamed by users. Require the complete
+    standard trio so an incomplete traversal cannot silently shift the mapping.
+    """
+    found = []
+    for feature in automation._walk_features(doc, include_sub=False):
+        if str(com_get(feature, 'GetTypeName2', default='')) == 'RefPlane':
+            found.append(feature)
+            if len(found) == 3:
+                return dict(zip(('Front', 'Top', 'Right'), found))
+    return {}
+
+
 @contextmanager
 def command_scope(app):
     """Batch external CAD calls on the existing STA; always restore owner state.

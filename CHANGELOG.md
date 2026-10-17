@@ -2,6 +2,19 @@
 
 [Project overview](README.md) · [Current tool reference](docs/tools.md)
 
+## Post-candidate fix: localized standard planes (issue #1)
+
+- `create_sketch(Front/Top/Right)` resolves the first three top-level `RefPlane`
+  features and selects the feature with `Select2(False, 0)`. Localized and renamed
+  planes no longer depend on English display names. Discovery is shared with the
+  shape compiler; the public arguments remain unchanged.
+- Failed lookup/selection reports the requested plane, resolved name, method and
+  original HRESULT when available, without opening a sketch or misclassifying a
+  false selection result as `COM_MEMBER_MISMATCH`.
+- Reproduced on SOLIDWORKS 2026 SP2.1; all six English/Polish-name native lifecycles
+  passed. Added ten regression tests. Thanks to **piotrostapiuk-ship-it** for the
+  confirmed cause and proposed fix. [Evidence and scope](docs/issue-1-standard-planes.md).
+
 ## 6.30.0rc1: large programs, observable exports and durable results
 
 - The interpreter component budget increases from 128 to **512**. Limit errors

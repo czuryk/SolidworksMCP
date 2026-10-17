@@ -81,9 +81,13 @@ SOLIDWORKS session. The documented native fixtures were qualified on SOLIDWORKS
 2026 SP2.1; Python 3.11 was tested. SOLIDWORKS 2025 compatibility guards remain,
 but the new recipes have not been qualified on that version.
 
-The published code snapshot passed **704 unit and regression tests**. The default
+Shape programs support **512 components**, including consumed nodes and patterns.
+The published code snapshot passed **714 unit and regression tests**. The default
 catalog has 13 tools, with 84 more expert operations available through discovery.
 The full schemas are [versioned alongside the documentation](docs/tool-schemas.json).
+
+Standard-plane sketches support localized and renamed planes.
+[Issue #1: reproduction, fix and six native checks](docs/issue-1-standard-planes.md).
 
 The Bender examples are recorded October 5–7 runs on 6.27.0–6.29.5, not a fresh
 6.30.0rc1 native acceptance run. The detailed character run cancelled export;

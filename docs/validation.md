@@ -74,9 +74,14 @@ inline images. Neither replaces the final short-prompt reconstruction benchmark.
 
 ## Publication checks
 
-The code snapshot published on October 17, 2026 passed all **704** unit and
+The code snapshot with the issue #1 fix on October 17, 2026 passed all **714** unit and
 regression tests. These COM-mocked and offline checks complement the recorded
 native acceptance runs; they do not replace live validation on another machine.
+
+The localized-plane fix also passed six live MCP lifecycles on SP2.1:
+Front/Top/Right with English and Polish plane names, each through extrusion,
+exact bounds, native health, save/reopen and STEP. See the
+[reproduction and native results](issue-1-standard-planes.md).
 
 The Bender case studies record earlier versions and identify their exact scope.
 The 24-body case did not export. The nine-body case has a validated historical
