@@ -3,7 +3,7 @@
 ## Major Update
 
 From a short description and reference images to **native, editable SOLIDWORKS
-models**. This update brings a new modeling workflow, a companion agent skill,
+models**. This update brings a new modeling workflow, **a companion agent SKILL**,
 and measured checks from the first draft to the final delivery.
 
 ### 1. Build complete parametric models
