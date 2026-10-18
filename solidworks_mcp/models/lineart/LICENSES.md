@@ -1,6 +1,7 @@
 # Line-art model licenses
 
-The packaged TorchScript models are deterministic inference exports of the
+The optional TorchScript models, distributed separately in
+[SolidworksMCP-models](https://github.com/czuryk/SolidworksMCP-models), are deterministic inference exports of the
 official checkpoints from the following MIT-licensed projects:
 
 - DexiNed (`dexined_biped_v2.pt`), copyright (c) 2019 Xavier Soria Poma.

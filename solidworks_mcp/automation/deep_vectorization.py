@@ -12,6 +12,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from ..model_weights import INSTALLATION_URL, ModelWeightsError
 
 
 SAM_MODEL_ID = "facebook/sam2.1-hiera-large"
@@ -42,6 +43,8 @@ _MODEL_BUNDLE = None
 def _hf_repo_cached(repo_id: str) -> bool:
     """Check the local Hugging Face snapshot index without a recursive scan."""
     try:
+        if Path(repo_id).is_dir():
+            return True
         from huggingface_hub.constants import HF_HUB_CACHE
         repo_root = Path(HF_HUB_CACHE) / (
             "models--" + repo_id.replace("/", "--"))
@@ -97,11 +100,30 @@ def capability_report() -> Dict[str, Any]:
         "torch_cuda_build": cuda_probe.get("torch_cuda_build"),
         "readiness_probe": cuda_probe.get("probe"),
         "models_cached": models,
+        "missing_models": [name for name, cached in models.items() if not cached],
+        "installation_url": INSTALLATION_URL,
         "supported_modes": sorted(SUPPORTED_REGION_MODES),
         "line_art_modes": sorted(LINE_ART_MODES),
         "line_art_backend_ready": bool(lineart.get("available")),
         "line_art": lineart,
     }
+
+
+def require_region_weights(sam_model_id=SAM_MODEL_ID, matte_model_id=MATTE_MODEL_ID):
+    """Check the local snapshot index before starting a worker or touching CAD."""
+    required = (sam_model_id, matte_model_id)
+    missing = [name for name in required if not _hf_repo_cached(name)]
+    actions = [f'Cache the region models with: hf download {name}' for name in required]
+    actions.append('Call get_capabilities to check the model cache and CUDA readiness.')
+    if missing:
+        raise ModelWeightsError(
+            'MODEL_WEIGHTS_MISSING',
+            'Region vectorization requires locally cached model weights: '
+            + ', '.join(missing) + '. See ' + INSTALLATION_URL
+            + '. Other modeling tools remain available.',
+            {'backend': 'sam2_vitmatte', 'missing_models': missing,
+             'installation_url': INSTALLATION_URL, 'geometry_created': False}, actions)
+    return actions
 
 
 def _load_models(sam_model_id: str, matte_model_id: str):
@@ -110,6 +132,7 @@ def _load_models(sam_model_id: str, matte_model_id: str):
     with _MODEL_LOCK:
         if _MODEL_BUNDLE is not None and _MODEL_BUNDLE[0] == key:
             return _MODEL_BUNDLE[1]
+        actions = require_region_weights(*key)
         import torch
         from transformers import (
             Sam2Model,
@@ -133,9 +156,13 @@ def _load_models(sam_model_id: str, matte_model_id: str):
                 matte_model_id, local_files_only=True,
                 dtype=torch.bfloat16).to("cuda").eval()
         except Exception as exc:
-            raise RuntimeError(
-                "Deep vector models are not available in the local cache. "
-                f"Required: {sam_model_id}, {matte_model_id}. Details: {exc}") from exc
+            raise ModelWeightsError(
+                'MODEL_WEIGHTS_INVALID',
+                'Region vectorization could not load the cached model files. '
+                'The cache may be incomplete or incompatible with the installed libraries. '
+                f'Details: {exc}',
+                {'backend': 'sam2_vitmatte', 'required_models': list(key),
+                 'installation_url': INSTALLATION_URL, 'geometry_created': False}, actions) from exc
         bundle = {
             "torch": torch,
             "sam_processor": sam_processor,

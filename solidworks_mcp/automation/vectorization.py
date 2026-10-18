@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..constants import SwErrors
+from ..model_weights import ModelWeightsError
 from .runtime import atomic_json_write, structured_error
 
 
@@ -3192,6 +3193,10 @@ class ImageSketchOperations:
                         "a tolerance only when the measured deviation is acceptable."])
             return self._result(True, "Image vectorization completed",
                                 SwErrors.swSuccess, data)
+        except ModelWeightsError as exc:
+            return self._error(
+                exc.code, str(exc), stage="model_preflight", recoverable=True,
+                details=exc.details, recommended_actions=exc.actions)
         except CurveFitError as exc:
             return self._error(
                 "IMAGE_LOW_CONFIDENCE", str(exc),
@@ -3206,6 +3211,12 @@ class ImageSketchOperations:
                     "Choose a supported region trace mode or run the requested "
                     "line-art mode only after its dedicated backend is available."])
         except RuntimeError as exc:
+            if "Line-art ensemble is unavailable" in str(exc):
+                return self._error(
+                    "CAPABILITY_UNAVAILABLE", str(exc), stage="model_preflight",
+                    recommended_actions=[
+                        "Install a CUDA-enabled PyTorch build and verify the NVIDIA GPU "
+                        "with get_capabilities. The DexiNed/TEED weights have already been verified."])
             if ("Deep vector" in str(exc) or "CUDA" in str(exc) or
                     "Line-art ensemble is unavailable" in str(exc)):
                 return self._error(

@@ -2435,6 +2435,14 @@ async def _dispatch_tool(name: str, arguments: dict):
             if isinstance(resolved,tuple):
                 return await _dispatch_tool(*resolved)
             return _executor_content(name,resolved)
+        if name == 'image_to_sketch':
+            from .model_weights import ModelWeightsError, preflight_vectorization_request
+            try:
+                await asyncio.to_thread(preflight_vectorization_request, arguments)
+            except ModelWeightsError as exc:
+                return _executor_content(name, sw_automation._error(
+                    exc.code, str(exc), stage='model_preflight', recoverable=True,
+                    details=exc.details, recommended_actions=exc.actions))
         if name in {'execute_python', 'execute_python_async'} and (arguments.get('ui_guard') or {}):
             validate_policy(arguments['ui_guard'])
         if name == 'get_executor_status':

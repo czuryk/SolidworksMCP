@@ -83,6 +83,10 @@ the result against the approved references.
 to SOLIDWORKS. The skill guides the agent through drafting, building, editing,
 verification and export.
 
+**No model weights are needed for ordinary CAD work.** Download this project as
+a ZIP or clone it normally. For image vectorization, install the
+[optional weights](docs/setup.md#optional-vectorization-models) separately.
+
 Start with `get_model_context` and `model_api_lookup(topic="all")`. A first shape
 program can be as small as:
 
@@ -114,7 +118,7 @@ SOLIDWORKS session. The documented native fixtures were qualified on SOLIDWORKS
 but the new recipes have not been qualified on that version.
 
 Shape programs support **512 components**, including consumed nodes and patterns.
-The published code snapshot passed **714 unit and regression tests**. The default
+The published code snapshot passed **731 unit and regression tests**. The default
 catalog has 13 tools, with 84 more expert operations available through discovery.
 The full schemas are [versioned alongside the documentation](docs/tool-schemas.json).
 
@@ -141,11 +145,11 @@ python tests/check_skill_docs.py --skill skills/solidworks-mcp
 python examples/bender/check_evidence.py
 ```
 
-The bundled line-art checkpoints use Git LFS. Documentation and Bender images
-use ordinary Git.
+The main checkout, documentation and Bender images use ordinary Git. Optional
+line-art weights live in [SolidworksMCP-models](https://github.com/czuryk/SolidworksMCP-models).
 
 </details>
 
 ## License
 
-[MIT](LICENSE). Packaged model notices: [LICENSES.md](solidworks_mcp/models/lineart/LICENSES.md).
+[MIT](LICENSE). Optional model notices: [LICENSES.md](solidworks_mcp/models/lineart/LICENSES.md).

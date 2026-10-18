@@ -1,42 +1,25 @@
 """Verified deep line-art extraction for technical drawings.
 
 The backend is an ensemble of DexiNed (BIPED v2) and TEED.  Both upstream
-projects are MIT licensed by Xavier Soria Poma.  Packaged TorchScript models
+projects are MIT licensed by Xavier Soria Poma.  Optional TorchScript models
 are derived from their official checkpoints and verified by SHA-256 before
 loading.  Region matting is deliberately not used as a fallback here.
 """
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import math
 import re
 import subprocess
 import threading
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-LINE_ART_MODES = {"stroke_centerlines", "stroke_edges", "all_visible_edges"}
-MODEL_SPECS = {
-    "dexined": {
-        "filename": "dexined_biped_v2.pt",
-        "sha256": "096C2230D3060104BAE083A4B0C882EBC6301D730C401C7E8556A6D8F944C65B",
-        "mean_bgr": [103.939, 116.779, 123.68],
-        "multiple": 16,
-        "source": "xavysp/DexiNed official BIPED v2 checkpoint",
-    },
-    "teed": {
-        "filename": "teed_biped_5.pt",
-        "sha256": "3175EC531B2238EAAACBCFAC17111666F2B8C885BD04F785DE36F8C776C80C3A",
-        "mean_bgr": [104.007, 116.669, 122.679],
-        "multiple": 8,
-        "source": "xavysp/TEED official BIPED checkpoint 5",
-    },
-}
+from ..model_weights import (LINE_ART_MODES, MODEL_SPECS, inspect_lineart_weights,
+                             model_directory, require_lineart_weights)
 
 
 @dataclass
@@ -53,7 +36,7 @@ _MODEL_BUNDLE = None
 
 
 def _model_directory() -> Path:
-    return Path(__file__).resolve().parents[1] / "models" / "lineart"
+    return model_directory()
 
 
 def _lightweight_cuda_probe() -> Dict[str, Any]:
@@ -99,47 +82,22 @@ def _lightweight_cuda_probe() -> Dict[str, Any]:
     }
 
 
-@lru_cache(maxsize=8)
-def _verified_file(path_text: str, size: int, modified_ns: int,
-                   expected_hash: str) -> bool:
-    path = Path(path_text)
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest().upper() == expected_hash
-
-
 def capability_report() -> Dict[str, Any]:
     """Report readiness without importing Torch or warming CUDA kernels."""
     cuda_probe = _lightweight_cuda_probe()
     torch_installed = bool(cuda_probe["torch"])
     cuda = bool(cuda_probe["cuda"])
     device = cuda_probe["device"]
-    files = {}
-    directory = _model_directory()
-    for name, spec in MODEL_SPECS.items():
-        path = directory / spec["filename"]
-        exists = path.is_file()
-        verified = False
-        if exists:
-            stat = path.stat()
-            verified = _verified_file(
-                str(path), stat.st_size, stat.st_mtime_ns, spec["sha256"])
-        files[name] = {
-            "path": str(path), "exists": exists,
-            "sha256_verified": verified, "source": spec["source"],
-        }
-    ready = torch_installed and cuda and all(
-        item["sha256_verified"] for item in files.values())
+    weights = inspect_lineart_weights(_model_directory())
+    ready = torch_installed and cuda and weights['weights_status'] == 'ready'
     return {
+        **weights,
         "available": ready,
         "torch": torch_installed,
         "cuda": cuda,
         "device": device,
         "torch_cuda_build": cuda_probe["torch_cuda_build"],
         "readiness_probe": cuda_probe["probe"],
-        "models": files,
         "supported_modes": sorted(LINE_ART_MODES),
         "backends": ["dexined_biped_v2", "teed_biped_5"],
     }
@@ -148,9 +106,11 @@ def capability_report() -> Dict[str, Any]:
 def _load_models():
     global _MODEL_BUNDLE
     with _MODEL_LOCK:
-        if _MODEL_BUNDLE is not None:
+        if (_MODEL_BUNDLE is not None and
+                _MODEL_BUNDLE['capability']['models_directory'] == str(_model_directory())):
             return _MODEL_BUNDLE
         report = capability_report()
+        require_lineart_weights(report)
         if not report["available"]:
             raise RuntimeError(
                 "Line-art ensemble is unavailable; CUDA and both verified "

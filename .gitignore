@@ -41,6 +41,9 @@ config.local.json
 logs/
 checkpoints/
 
+# Optional weights are distributed in czuryk/SolidworksMCP-models.
+/solidworks_mcp/models/lineart/*.pt
+
 # Generated test and acceptance artifacts
 tmp/
 temp/

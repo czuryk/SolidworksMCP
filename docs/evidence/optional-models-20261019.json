@@ -1,0 +1,84 @@
+{
+  "date": "2026-10-19",
+  "server_version": "6.30.0rc1",
+  "solidworks_version": "2026 SP2.1",
+  "unit_tests": {
+    "passed": 731,
+    "optional_weight_tests": 17
+  },
+  "without_weights": {
+    "status": "PASS",
+    "default_tool_count": 13,
+    "missing_lineart_files": [
+      "dexined_biped_v2.pt",
+      "teed_biped_5.pt"
+    ],
+    "rejected_requests": [
+      {
+        "code": "MODEL_WEIGHTS_MISSING",
+        "backend": "line_art",
+        "geometry_created": false
+      },
+      {
+        "code": "MODEL_WEIGHTS_MISSING",
+        "backend": "sam2_vitmatte",
+        "geometry_created": false
+      },
+      {
+        "code": "MODEL_WEIGHTS_MISSING",
+        "backend": "line_art",
+        "geometry_created": false
+      }
+    ],
+    "native_body_count": 1,
+    "dimensions_mm": [
+      20,
+      30,
+      20
+    ],
+    "volume_mm3": 6031.857895,
+    "kernel_health": {
+      "method": "IBody2.Check3",
+      "fault_count": 0,
+      "passed": true
+    },
+    "revision_preserved_after_rejected_request": true,
+    "implicit_downloads": false
+  },
+  "installed_weights": {
+    "status": "PASS",
+    "device": "NVIDIA GeForce RTX 4090",
+    "torch_cuda_build": "12.4",
+    "models": {
+      "dexined": {
+        "filename": "dexined_biped_v2.pt",
+        "sha256": "096C2230D3060104BAE083A4B0C882EBC6301D730C401C7E8556A6D8F944C65B",
+        "verified": true
+      },
+      "teed": {
+        "filename": "teed_biped_5.pt",
+        "sha256": "3175EC531B2238EAAACBCFAC17111666F2B8C885BD04F785DE36F8C776C80C3A",
+        "verified": true
+      }
+    },
+    "inference": {
+      "dexined": {
+        "shape": [
+          128,
+          128
+        ],
+        "min": 2.512443586510926e-10,
+        "max": 0.9771156311035156
+      },
+      "teed": {
+        "shape": [
+          128,
+          128
+        ],
+        "min": 0.4378250539302826,
+        "max": 0.9999271631240845
+      }
+    },
+    "scope": "Model integrity, CUDA loading and finite edge probabilities; no CAD tracing commit."
+  }
+}

@@ -7,22 +7,20 @@
 - Windows 10 or Windows 11.
 - SOLIDWORKS 2025 or 2026, installed and licensed.
 - Python 3.10 or newer; Python 3.11 is the acceptance-tested runtime.
-- Git LFS for the packaged line-art checkpoints.
-- An NVIDIA CUDA environment is strongly recommended for the deep
-  vectorization modes. `get_capabilities` reports the actual backend state.
+- Deep vectorization additionally requires model weights and an NVIDIA CUDA
+  environment. Ordinary CAD tools work without the weights.
 
 The server drives the interactive SOLIDWORKS process. It is not a headless CAD
 kernel, and an unknown modal dialog must be inspected by a human.
 
 ## Clone and install
 
-Install Git LFS before cloning, or pull the model objects afterwards:
+Use **Code → Download ZIP** on GitHub and extract it, or clone normally.
+The main checkout does not require Git LFS:
 
 ```powershell
-git lfs install
 git clone https://github.com/czuryk/SolidworksMCP.git
 Set-Location SolidworksMCP
-git lfs pull
 ```
 
 Create an isolated Python environment and install dependencies:
@@ -82,18 +80,94 @@ renamed.
 - Do not invoke a blind `Ctrl+8` after sketch operations. Version 6.5.32 already
   applies and verifies the stable side/up orientation and working-geometry fit.
 
-## Vectorization models
+## Optional vectorization models
 
-The deterministic line-art checkpoints live under
-`solidworks_mcp/models/lineart/` and are stored with Git LFS:
+**Install weights only if you need image tracing.** Startup, parametric modeling,
+editing, reference comparisons, inspection and export work without them. The
+server does not download weights automatically or silently switch tracing backends.
 
-- `dexined_biped_v2.pt`
-- `teed_biped_5.pt`
+### Line-art tracing: DexiNed + TEED
 
-Their source and license notices are documented in
-`solidworks_mcp/models/lineart/LICENSES.md`. A clone containing small LFS pointer
-files instead of the binary objects is incomplete; run `git lfs pull` before
-starting the server.
+The `stroke_centerlines`, `stroke_edges` and `all_visible_edges` modes use two
+verified TorchScript files from the separate
+[SolidworksMCP-models repository](https://github.com/czuryk/SolidworksMCP-models):
+`dexined_biped_v2.pt` and `teed_biped_5.pt` (about 142 MB together).
+
+Download that repository with Git LFS, independently of the server:
+
+```powershell
+git lfs install
+git clone https://github.com/czuryk/SolidworksMCP-models.git C:/Downloads/SolidworksMCP-models
+git -C C:/Downloads/SolidworksMCP-models lfs pull
+```
+
+From the main SolidworksMCP project folder, install the downloaded files:
+
+```powershell
+python scripts/install_vectorization_models.py --from-dir C:/Downloads/SolidworksMCP-models
+```
+
+The installer verifies both SHA-256 hashes before replacing any existing files,
+then copies them to `solidworks_mcp/models/lineart/`. It makes no network requests.
+Original upstream training checkpoints are not interchangeable with these exports.
+[Source and license notices](../solidworks_mcp/models/lineart/LICENSES.md).
+
+Alternatively, keep the files in the separate repository and set
+`SOLIDWORKS_MCP_LINEART_MODELS_DIR` in your MCP launch environment to its absolute
+`lineart` directory. For example, add this beside `command` and `args`:
+
+```json
+"env": {
+  "SOLIDWORKS_MCP_LINEART_MODELS_DIR": "C:\\Downloads\\SolidworksMCP-models\\lineart"
+}
+```
+
+Reconnect MCP after changing its launch environment. Existing local weights in
+the original server directory remain supported. When updating an older Git
+checkout, Git may remove the formerly tracked weights; back them up first or
+reinstall from the separate models repository.
+
+The **main project ZIP works without LFS**. A source ZIP of the **models repository**
+contains only pointer files unless its GitHub archive setting includes LFS objects.
+The installer detects these pointers and asks for `git lfs pull` in that repository.
+LFS bandwidth is shared across the owner's account: separating repositories
+isolates a blocked model download from the main checkout but does not add quota.
+
+### Region tracing: SAM 2.1 + ViTMatte
+
+The default region backend (`outer_silhouette`, `silhouette_with_holes`,
+`all_region_boundaries`, `guided_components`) uses different models from the
+local Hugging Face cache. Install these only when you need region tracing:
+
+```powershell
+hf download facebook/sam2.1-hiera-large
+hf download hustvl/vitmatte-base-composition-1k
+```
+
+These models also require CUDA and the compatible PyTorch/Transformers packages
+from `requirements.txt`. The explicit `classical` backend does not use model
+weights. It is diagnostic-only and requires an explicit
+`commit.acknowledge_classical_backend=true` acknowledgement for CAD commit;
+its supported modes and quality checks still apply.
+
+### Check availability
+
+Call `expert_tools` with `action="call"`, `name="get_capabilities"`. Inspect
+`deep_vectorization.line_art` for per-file status, verified hashes, model directory
+and CUDA readiness; `deep_vectorization.models_cached` reports region model caches.
+The cache probe checks snapshot presence; actual loading also checks compatibility.
+
+| Result | Meaning and action |
+|---|---|
+| `weights_status: ready` | Both line-art files have the expected hashes; `available` also requires CUDA. |
+| `MODEL_WEIGHTS_MISSING` | A required file or region model cache is missing. The error lists it and links installation instructions. |
+| `MODEL_WEIGHTS_INVALID` | A line-art file is corrupt, unreadable or an LFS pointer, or cached region models cannot load. Follow the reported recovery steps. |
+| `CAPABILITY_UNAVAILABLE` | Required runtime support, such as CUDA, is unavailable. Read the error details. |
+
+Missing line-art files and missing region snapshots are rejected before an
+`image_to_sketch` request enters the CAD queue, including `force_commit`. No
+sketch is created. Other tools remain usable. After installing files, check
+capabilities again and retry the tracing request.
 
 SOLIDWORKS Autotrace/Picture to Sketch is an interactive PropertyManager feature
 and has no supported public API entry point. This server therefore uses its own

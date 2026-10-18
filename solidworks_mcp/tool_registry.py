@@ -88,7 +88,7 @@ NEW_TOOLS = SHAPE_TOOLS + [
          description='Read runtime counters of the expert transaction layer: rebuild/rollback counts, per-tool timings and the progress of the active operation. To review a modeling run (calls, answer sizes, slowest operations) use get_session_report.',
          inputSchema=_object("Metrics")),
     Tool(name="get_capabilities",
-         description='Inspect installed interfaces, operations, backends, export formats and limits when diagnosing an unsupported operation. Ordinary modeling starts with get_model_context.',
+         description='Inspect installed interfaces, operations, backends, export formats and limits when diagnosing an unsupported operation. Reports optional vectorization weights, missing files, model paths and CUDA readiness. Ordinary modeling starts with get_model_context.',
          inputSchema=_object("Capabilities")),
     Tool(name="recover_environment",
          description='Apply a bounded recovery policy: inspect UI, clear selection, exit sketch, repair Freeze Bar and at most one explicitly requested retry. Does not resolve an unknown COM outcome.',
@@ -101,7 +101,7 @@ NEW_TOOLS = SHAPE_TOOLS + [
              "discard_unsaved": {"type": "boolean", "default": False,
                                  "description": "Close unsaved documents without saving and end an unresponsive process"}})),
     Tool(name="image_to_sketch",
-         description='Convert raster line art or silhouettes into validated native sketch geometry. Use for an actual tracing task; choose trace/output modes and calibration explicitly. Analysis is isolated; CAD commit is transactional. Ordinary 3D references do not require tracing.',
+         description='Convert raster line art or silhouettes into validated native sketch geometry. Use for an actual tracing task; choose trace/output modes and calibration explicitly. Deep backends require optional model weights; MODEL_WEIGHTS_MISSING or MODEL_WEIGHTS_INVALID explains how to install or repair them. Ordinary CAD remains available without weights. Analysis is isolated; CAD commit is transactional. Ordinary 3D references do not require tracing.',
          inputSchema=_object("Image vectorization", {
              "image_path": {"type": "string"}, "sketch_name": {"type": "string"},
              "plane": {"type": "string", "enum": ["Front", "Top", "Right"]},

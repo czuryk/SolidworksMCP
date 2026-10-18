@@ -74,8 +74,9 @@ inline images. Neither replaces the final short-prompt reconstruction benchmark.
 
 ## Publication checks
 
-The code snapshot with the issue #1 fix on October 17, 2026 passed all **714** unit and
-regression tests. These COM-mocked and offline checks complement the recorded
+The code snapshot with optional model handling on October 19, 2026 passed all
+**731** unit and regression tests, including 17 optional-weight tests. These
+COM-mocked and offline checks complement the recorded
 native acceptance runs; they do not replace live validation on another machine.
 
 The localized-plane fix also passed six live MCP lifecycles on SP2.1:
@@ -94,3 +95,36 @@ python scripts/generate_tool_docs.py --check
 python tests/check_skill_docs.py --skill skills/solidworks-mcp
 python examples/bender/check_evidence.py
 ```
+
+## Optional model acceptance
+
+On October 19, 2026, a fresh stdio MCP server on SOLIDWORKS 2026 SP2.1 passed with
+an empty line-art directory and an empty Hugging Face cache:
+
+- All 13 default tools were advertised; capabilities reported the missing weights.
+- Both line-art and region tracing returned `MODEL_WEIGHTS_MISSING`, including
+  with `force_commit`, before CAD work.
+- A parametric pedestal was analyzed, created, saved and inspected: one healthy
+  native body, **20 × 30 × 20 mm**, volume **6031.857895 mm³**, zero kernel faults.
+- A second rejected tracing request preserved the model revision. The test
+  closed its own saved part and confirmed that no weights had been downloaded.
+
+The offline installer also verified and copied the real DexiNed/TEED files from
+the separate model repository. Both loaded on an RTX 4090 with CUDA 12.4 and
+produced finite, nonconstant 128 × 128 probability maps. This is an installation
+and inference check, not a new end-to-end native tracing qualification.
+
+[Recorded results](evidence/optional-models-20261019.json).
+To repeat these opt-in checks, use new output paths and run only one live CAD
+test at a time:
+
+```powershell
+python tests/live_optional_models.py --output-dir C:/Tests/OptionalModels
+python tests/live_lineart_models.py --model-dir C:/Downloads/SolidworksMCP-models/lineart --report C:/Tests/lineart-inference.json
+```
+
+The unit tests additionally cover missing/partial files, corrupt binaries,
+unreadable files, LFS pointers, installation recovery, SHA-256 validation and
+rejection before CAD queueing. The main source archive excludes `.pt` files;
+old Git history is retained, so this change does not purge historical LFS storage
+or reset the account's bandwidth usage.

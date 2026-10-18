@@ -2,6 +2,21 @@
 
 [Project overview](README.md) · [Current tool reference](docs/tools.md)
 
+## Post-candidate update: optional vectorization weights
+
+- Move the verified DexiNed/TEED exports to
+  [SolidworksMCP-models](https://github.com/czuryk/SolidworksMCP-models).
+  The main checkout and source ZIP no longer need Git LFS or model downloads.
+- Keep CAD modeling available without weights. Tracing reports
+  `MODEL_WEIGHTS_MISSING` or `MODEL_WEIGHTS_INVALID` with filenames, paths and
+  installation instructions. Missing-weight requests stop before CAD queueing.
+- Add an offline installer with SHA-256 verification and an optional external
+  model directory. Existing installations remain supported. Region tracing
+  identifies its separate SAM 2.1 / ViTMatte cache requirements.
+- Verify missing, partial, corrupt and LFS-pointer installations with regression
+  tests and a fresh native MCP lifecycle. [Setup](docs/setup.md#optional-vectorization-models)
+  and [validation](docs/validation.md#optional-model-acceptance).
+
 ## Post-candidate fix: localized standard planes (issue #1)
 
 - `create_sketch(Front/Top/Right)` resolves the first three top-level `RefPlane`

@@ -1172,7 +1172,7 @@ Disable the Freeze Bar and move it to the tree top. Automatic on connect and sup
 
 ### get_capabilities
 
-Inspect installed interfaces, operations, backends, export formats and limits when diagnosing an unsupported operation. Ordinary modeling starts with get_model_context.
+Inspect installed interfaces, operations, backends, export formats and limits when diagnosing an unsupported operation. Reports optional vectorization weights, missing files, model paths and CUDA readiness. Ordinary modeling starts with get_model_context.
 
 | Input | Type | Required | Default | Description and constraints |
 |---|---|---|---|---|
@@ -1276,7 +1276,7 @@ Hide a body by name.
 
 ### image_to_sketch
 
-Convert raster line art or silhouettes into validated native sketch geometry. Use for an actual tracing task; choose trace/output modes and calibration explicitly. Analysis is isolated; CAD commit is transactional. Ordinary 3D references do not require tracing.
+Convert raster line art or silhouettes into validated native sketch geometry. Use for an actual tracing task; choose trace/output modes and calibration explicitly. Deep backends require optional model weights; MODEL_WEIGHTS_MISSING or MODEL_WEIGHTS_INVALID explains how to install or repair them. Ordinary CAD remains available without weights. Analysis is isolated; CAD commit is transactional. Ordinary 3D references do not require tracing.
 
 | Input | Type | Required | Default | Description and constraints |
 |---|---|---|---|---|
