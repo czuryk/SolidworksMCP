@@ -2,7 +2,7 @@
   "schema": "solidworks-mcp/model-delivery/v1",
   "mcp_version": "6.29.5",
   "source": {
-    "path": "C:\\Users\\sevbo\\Documents\\Codex\\2026-10-11\\new-chat\\work\\Eiffel_Tower_150mm.SLDPRT",
+    "path": "recorded-local-file/Eiffel_Tower_150mm.SLDPRT",
     "sha256": "eb6e6deeb16a39f3735b9b799ea448e79eff8fc4cfda1c43ef4cd7481627cbe0",
     "revision": "48e0512862f0f1e5b5e562e420a9ae3da4314011f23a66f2262fbf8d5bbaaff3",
     "configuration": "Default"
@@ -79,7 +79,7 @@
     }
   ],
   "native_inspection": {
-    "document_path": "C:/Users/sevbo/Documents/Codex/2026-10-11/new-chat/work/Eiffel_Tower_150mm.SLDPRT",
+    "document_path": "recorded-local-file/Eiffel_Tower_150mm.SLDPRT",
     "revision": "48e0512862f0f1e5b5e562e420a9ae3da4314011f23a66f2262fbf8d5bbaaff3",
     "configuration": "Default",
     "unit": "mm",

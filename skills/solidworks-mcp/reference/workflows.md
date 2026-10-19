@@ -31,8 +31,8 @@ measurements. Do not optimize illustrative contours to subpixel precision.
 Measurements are optional only at this stage, before the first volume exists.
 
 Use [shape-programs.md](shape-programs.md) for family choices and pitfalls.
-Keep the number of modeling stages appropriate to the object and user request;
-there is no mandatory Bender-specific sequence or fixed screenshot count.
+Keep the number of modeling stages and views appropriate to the object and
+user request.
 
 ## Refine a saved shape program
 

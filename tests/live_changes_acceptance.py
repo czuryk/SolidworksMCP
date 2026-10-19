@@ -1,4 +1,4 @@
-"""Opt-in live acceptance of the changes.md programs A1-A6 and related tool behaviour.
+"""Opt-in live acceptance of shape recipes and related tool behaviour.
 
     python tests/live_changes_acceptance.py --output <new folder> --report <json> [--only A1 A4 ...]
 
@@ -572,7 +572,7 @@ G4 = HEAD + ('model.rounded_prism("Box", 20*u, 10*u, 6*u, 0, center=(0, 0, 3*u))
 
 
 def case_g4(s):
-    """Polygon prism, plain box and closed revolve (global-changes.md, G4)."""
+    """Polygon prism, plain box and closed revolve."""
     path, made = s.create('G4_Primitives', G4)
     draft = dispatch_new_tool(s.sw, 'execute_model_code', {'code': G4})['data']['draft']
     facts = s.inspect(path, made['revision'])
@@ -597,7 +597,7 @@ def case_g4(s):
 
 
 def case_revert(s):
-    """mode=revert restores earlier saved states without a rebuild (global-changes.md, G9)."""
+    """mode=revert restores earlier saved states without a rebuild."""
     path, made = s.create('Revert', A1)
     first = s.edit(path, made['revision'], parameters={'H': 120})
     second = s.edit(path, first['revision'], patch=[{'old': '"Slot", 28*u', 'new': '"Slot", 40*u'}])

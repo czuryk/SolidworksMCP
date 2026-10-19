@@ -1,4 +1,4 @@
-"""Frequent errors name a real tool and its arguments (changes.md, P2-8)."""
+"""Frequent errors name a real tool and its arguments."""
 import asyncio
 import tempfile
 import unittest

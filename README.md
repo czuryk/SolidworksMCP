@@ -73,9 +73,6 @@ the result against the approved references.
 | Every sampled silhouette level within 1.5 mm | Recorded height change preserves the 0.25 mm joint gaps |
 | Native views and comparison overlays | Validated SLDPRT, STEP and nine STL exports |
 
-[See the pictures and measured results](docs/bender.md) ·
-[Try the original programs](examples/bender/README.md)
-
 ## Start modeling
 
 [Install the server](docs/setup.md) and the included
@@ -105,7 +102,6 @@ new absolute `.SLDPRT` path to build. [Continue with the modeling guide](docs/mo
 | Set up the server and companion skill | [Installation](docs/setup.md) |
 | Learn the modeling and editing workflow | [Modeling guide](docs/modeling-guide.md) |
 | Find any tool, its parameters or its replacement | [Complete tool reference](docs/tools.md) |
-| Inspect Bender images, tests and source programs | [Case studies](docs/bender.md) |
 | Read test coverage and remaining limits | [Validation](docs/validation.md) |
 | Follow the release history | [Changelog](CHANGELOG.md) |
 
@@ -125,10 +121,10 @@ The full schemas are [versioned alongside the documentation](docs/tool-schemas.j
 Standard-plane sketches support localized and renamed planes.
 [Issue #1: reproduction, fix and six native checks](docs/issue-1-standard-planes.md).
 
-The Bender examples are recorded October 5–7 runs on 6.27.0–6.29.5, not a fresh
+The Bender showcase records October 5–7 runs on 6.27.0–6.29.5, not a fresh
 6.30.0rc1 native acceptance run. The detailed character run cancelled export;
 the glue-assembly run has a validated export and separate assembly checks.
-Images, source and records are included; CAD binaries remain external.
+Detailed source programs and test records are maintained internally.
 
 Long CAD sessions can accumulate substantial memory. Export validation does not
 certify every manufacturing property. [Recorded evidence and limitations](docs/validation.md).
@@ -142,10 +138,9 @@ certify every manufacturing property. [Recorded evidence and limitations](docs/v
 python -m unittest discover -s tests -p "test_*.py"
 python scripts/generate_tool_docs.py --check
 python tests/check_skill_docs.py --skill skills/solidworks-mcp
-python examples/bender/check_evidence.py
 ```
 
-The main checkout, documentation and Bender images use ordinary Git. Optional
+The main checkout, documentation and showcase image use ordinary Git. Optional
 line-art weights live in [SolidworksMCP-models](https://github.com/czuryk/SolidworksMCP-models).
 
 </details>

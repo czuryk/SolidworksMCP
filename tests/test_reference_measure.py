@@ -84,7 +84,7 @@ class ReferenceMeasureTests(unittest.TestCase):
 
 
 class ExpectedSizeChecks(unittest.TestCase):
-    """Numeric comparison of a reference element with the model (changes.md, P1-8)."""
+    """Numeric comparison of a reference element with the model."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

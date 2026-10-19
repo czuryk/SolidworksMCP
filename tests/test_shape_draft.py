@@ -1,4 +1,4 @@
-"""COM-free draft extents, silhouettes and reference comparison (global-changes.md, G1 and G2)."""
+"""COM-free draft extents, silhouettes and reference comparison."""
 import json
 import math
 import tempfile
@@ -15,7 +15,7 @@ from solidworks_mcp.shape_draft import (component_extents, draft_components, dra
 from solidworks_mcp.shape_program import run_program
 from solidworks_mcp.tool_registry import dispatch_new_tool
 
-FIXTURE = (Path(__file__).parent / 'fixtures' / 'bender_program.py').read_text(encoding='utf-8')
+FIXTURE = (Path(__file__).parent / 'fixtures' / 'parametric_assembly.py').read_text(encoding='utf-8')
 FIGURE = ('H = model.parameter("H", 100)\n'
           'u = H / 100\n'
           'body = model.sectioned_solid("Body", [(20*u, 14*u, 10*u), (70*u, 18*u, 12*u)])\n'
@@ -104,10 +104,10 @@ class ExtentTests(unittest.TestCase):
         self.assertLess(time.perf_counter() - started, 2)
         self.assertEqual(len(extents['bodies']), 9)
         self.assertTrue(near(extents['bbox'][1::3], [0, 150], .01))
-        # Native exact extents of the saved reference (inspect_model precision=delivery).
-        self.assertTrue(near(extents['bodies']['LegL'], [1, 0, -11, 23, 51.25, 11], .5))
-        self.assertTrue(near(extents['bodies']['Head'], [-13.9, 97, -10.75, 13.9, 150, 15.8], .5))
-        self.assertNotIn('ArmL', extents['estimated'])
+        # Analytic extents of the independent column and bracket fixtures.
+        self.assertTrue(near(extents['bodies']['Column0'], [-12, 0, -10, 12, 150, 10], .02))
+        self.assertTrue(near(extents['bodies']['BracketL'], [9, 65, 26, 21, 85, 34], .02))
+        self.assertNotIn('Column0', extents['estimated'])
 
 
 class SilhouetteTests(unittest.TestCase):

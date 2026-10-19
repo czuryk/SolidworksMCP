@@ -1,4 +1,4 @@
-"""Edit history with revert, and language-independent standard planes (global-changes.md, G9 and G10)."""
+"""Edit history with revert, and language-independent standard planes."""
 import hashlib
 import json
 import tempfile
@@ -156,13 +156,13 @@ class StandardPlaneTests(unittest.TestCase):
         return NativeCompiler(automation, SimpleNamespace(ClearSelection2=Mock())), automation
 
     def test_localized_planes_are_found_by_position(self):
-        tree = [self.feature('Примечания', 'DetailCabinet'), self.feature('Спереди', 'RefPlane'),
-                self.feature('Сверху', 'RefPlane'), self.feature('Справа', 'RefPlane'),
-                self.feature('Исходная точка', 'OriginProfileFeature'), self.feature('Плоскость1', 'RefPlane')]
+        tree = [self.feature('Anmerkungen', 'DetailCabinet'), self.feature('Vorne', 'RefPlane'),
+                self.feature('Oben', 'RefPlane'), self.feature('Rechts', 'RefPlane'),
+                self.feature('Ursprung', 'OriginProfileFeature'), self.feature('Ebene1', 'RefPlane')]
         compiler, automation = self.compiler(tree)
-        self.assertEqual(compiler.standard_plane('Front').Name, 'Спереди')
-        self.assertEqual(compiler.standard_plane('Top').Name, 'Сверху')
-        self.assertEqual(compiler.standard_plane('Right').Name, 'Справа')
+        self.assertEqual(compiler.standard_plane('Front').Name, 'Vorne')
+        self.assertEqual(compiler.standard_plane('Top').Name, 'Oben')
+        self.assertEqual(compiler.standard_plane('Right').Name, 'Rechts')
         compiler.select_standard_plane('Top')
         tree[2].Select2.assert_called_once_with(False, 0)
         # The tree is read once per compiler.

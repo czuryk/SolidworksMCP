@@ -1,6 +1,6 @@
-"""Opt-in latency profile of the reference model (changes.md, P1-2).
+"""Opt-in latency profile of the reference model.
 
-Creates the reference part from tests/fixtures/bender_program.py in a NEW
+Creates the reference part from tests/fixtures/parametric_assembly.py in a NEW
 folder, then runs three edit scenarios three times each through the same
 request boundary the MCP server uses, and writes medians with timings_ms.
 
@@ -24,21 +24,21 @@ from solidworks_mcp.automation.request_journal import RequestJournal
 from solidworks_mcp.automation.session_lease import SessionLease
 from solidworks_mcp.tool_registry import dispatch_new_tool
 
-FIXTURE = Path(__file__).parent / 'fixtures' / 'bender_program.py'
-PUPIL_PRISM = 'model.rounded_prism("PupilCutL", 1.7*u, 1.7*u, 2.0*u, 0.15*u, center=P(5.6, 116.1, 17.0))'
-PUPIL_WIDE = 'model.rounded_prism("PupilCutL", 1.8*u, 1.8*u, 2.0*u, 0.15*u, center=P(5.6, 116.1, 17.0))'
-PUPIL_ROUND = 'model.ellipsoid("PupilCutL", (0.85*u, 0.85*u, 1.0*u), center=P(5.6, 116.1, 17.0))'
+FIXTURE = Path(__file__).parent / 'fixtures' / 'parametric_assembly.py'
+SLOT_PRISM = 'model.rounded_prism("SlotCutL", 1.7*u + Clr, 1.7*u + Clr, 12*u, 0.15*u, center=(15*u, H/2, 30*u))'
+SLOT_WIDE = 'model.rounded_prism("SlotCutL", 1.8*u + Clr, 1.8*u + Clr, 12*u, 0.15*u, center=(15*u, H/2, 30*u))'
+SLOT_ROUND = 'model.ellipsoid("SlotCutL", (0.85*u + Clr/2, 0.85*u + Clr/2, 6*u), center=(15*u, H/2, 30*u))'
 SCENARIOS = {
     # Only the driving parameter changes.
     'parameter_H': [{'parameters': {'H': 120}}, {'parameters': {'H': 150}}, {'parameters': {'H': 120}}],
     # One definition changes; the topology of every component stays.
-    'definition_edit': [{'patch': [{'old': PUPIL_PRISM, 'new': PUPIL_WIDE}]},
-                        {'patch': [{'old': PUPIL_WIDE, 'new': PUPIL_PRISM}]},
-                        {'patch': [{'old': PUPIL_PRISM, 'new': PUPIL_WIDE}]}],
+    'definition_edit': [{'patch': [{'old': SLOT_PRISM, 'new': SLOT_WIDE}]},
+                        {'patch': [{'old': SLOT_WIDE, 'new': SLOT_PRISM}]},
+                        {'patch': [{'old': SLOT_PRISM, 'new': SLOT_WIDE}]}],
     # One component changes its family: it and its dependents (one body and its mirror) rebuild.
-    'topology_edit': [{'patch': [{'old': PUPIL_WIDE, 'new': PUPIL_ROUND}]},
-                      {'patch': [{'old': PUPIL_ROUND, 'new': PUPIL_PRISM}]},
-                      {'patch': [{'old': PUPIL_PRISM, 'new': PUPIL_ROUND}]}],
+    'topology_edit': [{'patch': [{'old': SLOT_WIDE, 'new': SLOT_ROUND}]},
+                      {'patch': [{'old': SLOT_ROUND, 'new': SLOT_PRISM}]},
+                      {'patch': [{'old': SLOT_PRISM, 'new': SLOT_ROUND}]}],
 }
 
 

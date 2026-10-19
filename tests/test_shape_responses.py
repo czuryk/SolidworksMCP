@@ -12,8 +12,8 @@ from solidworks_mcp.shape_responses import (compact_response, compact_context, c
 from solidworks_mcp.automation.sta_executor import StaExecutor
 from solidworks_mcp.tool_registry import dispatch_new_tool
 
-FIXTURE = Path(__file__).parent / 'fixtures' / 'bender_program.py'
-BODIES = ['LegL', 'Torso', 'EyeR', 'Head', 'LegR', 'Teeth', 'ArmR', 'ArmL', 'EyeL']
+FIXTURE = Path(__file__).parent / 'fixtures' / 'parametric_assembly.py'
+BODIES = [f'Column{i}' for i in range(7)] + ['BracketL', 'BracketR']
 
 
 def size(value):
@@ -25,7 +25,7 @@ def ok(data):
 
 
 class ReferenceAnswers(unittest.TestCase):
-    """Answer sizes on the 88-node reference program (changes.md, P0-2)."""
+    """Answer sizes on the 88-node reference program."""
 
     @classmethod
     def setUpClass(cls):
@@ -36,7 +36,7 @@ class ReferenceAnswers(unittest.TestCase):
             live = node['id'] in BODIES
             cls.components[node['id']] = {
                 'feature': node['id'], 'bodies': [node['id']] if live else [], 'face_count': 40 if live else 0,
-                'kind': node['kind'], **({} if live else {'consumed_by': 'TorsoSolid'}),
+                'kind': node['kind'], **({} if live else {'consumed_by': 'Column0'}),
                 **({'dependencies': node['geometry']['seeds']} if 'seeds' in node['geometry'] else {})}
         cls.body_state = {'count': 9, 'bbox_unit': 'mm', 'bodies': [
             {'name': name, 'visible': True, 'face_count': 61,
@@ -46,7 +46,7 @@ class ReferenceAnswers(unittest.TestCase):
             'mcp_version': '6.25.0', 'shape_program_version': 3,
             'coordinate_system': {'unit': 'mm', 'up': 'Y', 'width': 'X', 'depth': 'Z'},
             'native_parameter_bindings': True, 'in_place_edit': True, 'workflow': 'reconstruct_shape',
-            'document': {'title': 'Bender.SLDPRT', 'path': 'D:\\TMP\\bender\\work\\Bender.SLDPRT', 'dirty': False, 'type': 1},
+            'document': {'title': 'Assembly.SLDPRT', 'path': 'D:\\TMP\\fixture\\work\\Assembly.SLDPRT', 'dirty': False, 'type': 1},
             'entry_points': ['execute_model_code'] * 7, 'constructors': ['parameter'] * 18,
             'defaults': {'observations': 'automatic after create/edit'},
             'body_state': cls.body_state, 'document_editable': True,
@@ -77,8 +77,8 @@ class ReferenceAnswers(unittest.TestCase):
 
     def test_context_components_and_full_detail(self):
         result = ok(self.context)
-        picked = compact_response('get_model_context', {'components': ['Head', 'Missing']}, result)['data']
-        self.assertEqual(list(picked['components']), ['Head'])
+        picked = compact_response('get_model_context', {'components': ['BracketL', 'Missing']}, result)['data']
+        self.assertEqual(list(picked['components']), ['BracketL'])
         self.assertEqual(picked['unknown_components'], ['Missing'])
         full = compact_response('get_model_context', {'detail': 'full'}, result)
         self.assertIs(full, result)
@@ -93,18 +93,18 @@ class ReferenceAnswers(unittest.TestCase):
 
     def edit_result(self):
         names = list(self.components)
-        images = [{'view': view, 'path': f'D:\\TMP\\bender\\work\\Bender_views\\{"c" * 32}\\{view}.png',
-                   'document': 'D:\\TMP\\bender\\work\\Bender.SLDPRT', 'revision': 'a' * 64,
+        images = [{'view': view, 'path': f'D:\\TMP\\fixture\\work\\Assembly_views\\{"c" * 32}\\{view}.png',
+                   'document': 'D:\\TMP\\fixture\\work\\Assembly.SLDPRT', 'revision': 'a' * 64,
                    'configuration': 'Default', 'size_px': [1000, 1000], 'sha256': 'd' * 64,
                    'native_scale': 1.5, 'perspective': False} for view in ('front', 'right', 'isometric')]
         return {'components': self.components, 'status': 'NATIVE_GEOMETRY_UPDATED',
                 'native_parameter_bindings': True, 'in_place_edit': True, 'compiler_version': 3,
-                'document': 'D:\\TMP\\bender\\work\\Bender.SLDPRT', 'program_hash': 'e' * 64,
+                'document': 'D:\\TMP\\fixture\\work\\Assembly.SLDPRT', 'program_hash': 'e' * 64,
                 'updated_curve_count': 12, 'native_feature_ids_preserved': False,
                 'preserved_components': names[:-3], 'rebuilt_components': names[-3:],
                 'removed_components': ['OldMask'], 'added_components': [names[-3]], 'added_parameters': [],
-                'obsolete_features_removed': ['HeadShell', 'HeadCarved', 'Head'],
-                'edit_strategy': 'dependency_reconcile', 'committed_document': 'D:\\TMP\\bender\\work\\Bender.SLDPRT',
+                'obsolete_features_removed': ['BracketBlankL', 'SlotCutL', 'BracketL'],
+                'edit_strategy': 'dependency_reconcile', 'committed_document': 'D:\\TMP\\fixture\\work\\Assembly.SLDPRT',
                 'native_file_preserved': True, 'native_mutation_started': True, 'revision': 'f' * 64,
                 'parameters': {'H': 150.0, 'Clr': 0.25}, 'body_state': self.body_state,
                 'working_view': {'verified': True, 'status': 'FRAMED', 'bodies': BODIES, 'scale': 1.25,
@@ -149,10 +149,10 @@ class ReferenceAnswers(unittest.TestCase):
         answer = compact_response('execute_model_code', {}, ok(full))
         self.assertLessEqual(size(answer), 2000)
         data = answer['data']
-        self.assertEqual(data['nodes_by_kind']['tube'], 30)
+        self.assertEqual(data['nodes_by_kind']['tube'], 70)
         self.assertEqual(data['node_count'], 88)
         self.assertEqual(data['parameters'], {'H': 150.0, 'Clr': 0.25})
-        self.assertIn('Head', data['components'])
+        self.assertIn('BracketL', data['components'])
         self.assertIn('stdout', data)
         self.assertNotIn('source_graph', data)
 
@@ -175,8 +175,8 @@ class ReferenceAnswers(unittest.TestCase):
         full = {'document_path': 'D:\\x.SLDPRT', 'revision': 'a' * 64, 'unit': 'mm', 'bodies': facts,
                 'bbox': {'min': [0, 0, 0], 'max': [1, 2, 3]}, 'parameters': {'H': 150.0},
                 'sections': [], 'cad_entities_created': 0,
-                'body_pairs': [{'id': f'fit{i}', 'a': {'body': 'Head'}, 'b': {'body': 'Torso'},
-                                'body_a': 'Head', 'body_b': 'Torso', **pair} for i in range(8)]}
+                'body_pairs': [{'id': f'fit{i}', 'a': {'body': 'BracketL'}, 'b': {'body': 'Column1'},
+                                'body_a': 'BracketL', 'body_b': 'Column1', **pair} for i in range(8)]}
         answer = compact_inspection(full)
         self.assertLessEqual(size(ok(answer)), 10000)
         self.assertLess(size(answer), size(full) * .75)
@@ -210,7 +210,7 @@ class BoundaryTests(unittest.TestCase):
         compact = dispatch_new_tool(server.sw_automation, 'execute_model_code', {'code': code})
         self.assertTrue(compact['success'])
         self.assertNotIn('nodes', compact['data'])
-        # 1.6k for the summary itself plus about 0.6k of predicted extents (global-changes.md, G1).
+        # 1.6k for the summary itself plus about 0.6k of predicted extents.
         self.assertLessEqual(size(compact), 2850)   # Includes warnings and three numerical budget fields.
         verbose = dispatch_new_tool(server.sw_automation, 'execute_model_code', {'code': code, 'verbose': True})
         self.assertEqual(len(verbose['data']['nodes']), 88)

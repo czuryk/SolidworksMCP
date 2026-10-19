@@ -1,4 +1,4 @@
-"""Evaluating native curve expressions to prove a rebuild is current (global-changes.md, G11)."""
+"""Evaluating native curve expressions to prove a rebuild is current."""
 import math
 import unittest
 from pathlib import Path
@@ -10,7 +10,7 @@ from solidworks_mcp.native_expressions import curve_endpoints, evaluate, referen
 from solidworks_mcp.shape_equations import plan_recipes
 from solidworks_mcp.shape_program import run_program
 
-FIXTURE = (Path(__file__).parent / 'fixtures' / 'bender_program.py').read_text(encoding='utf-8')
+FIXTURE = (Path(__file__).parent / 'fixtures' / 'parametric_assembly.py').read_text(encoding='utf-8')
 DIMENSIONS = {'H': 'D1@ShapeParameters', 'Clr': 'D2@ShapeParameters'}
 
 
@@ -47,9 +47,9 @@ class EvaluateTests(unittest.TestCase):
             moved += a != b
         # Nearly every curve depends on H: a stale sketch has other end points.
         self.assertGreater(moved, len(curves) * .9)
-        head = next(c for c in curves if c['sketch'] == 'HeadCylinder_Section1')
-        self.assertAlmostEqual(curve_endpoints(head, full)[0][0], 10.7, places=6)
-        self.assertAlmostEqual(curve_endpoints(head, small)[0][0], 8.56, places=6)
+        core = next(c for c in curves if c['sketch'] == 'Core0_Section1')
+        self.assertAlmostEqual(curve_endpoints(core, full)[0][0], 8.0, places=6)
+        self.assertAlmostEqual(curve_endpoints(core, small)[0][0], 6.4, places=6)
 
 
 class CurvesCurrentTests(unittest.TestCase):

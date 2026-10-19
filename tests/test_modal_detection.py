@@ -1,4 +1,4 @@
-"""Modal detection must separate real dialogs from tooltips (changes.md, P1-7)."""
+"""Modal detection must separate real dialogs from tooltips."""
 import sys
 import types
 import unittest

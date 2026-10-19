@@ -1,6 +1,6 @@
 # Validation and known limits
 
-[Project overview](../README.md) · [Bender case studies](bender.md)
+[Project overview](../README.md)
 
 ## Current candidate
 
@@ -45,9 +45,10 @@ python -m unittest discover -s tests -p "test_*.py"
 
 Release 6.15.0 adds durable retry/conflict, native rollback, checkpoint retention
 and scoped UI-monitor regression tests.
-`tests/live_request_receipts.py --output C:/Tests/Receipts.SLDPRT --report C:/Tests/receipts.json`
+`tests/live_request_receipts.py --output C:/Tests/Receipts.SLDPRT --report C:/Tests/receipts.json --other-document C:/Tests/Other.SLDPRT`
 checks native replay across reopen/MCP restart, changed targets/payloads/state,
-and the UI-only monitor on the shared owner.
+and the UI-only monitor on the shared owner. Supply an existing separate part
+for the document-switch check.
 `tests/live_sta_executor.py --output C:/Tests/Executor.SLDPRT --report C:/Tests/executor.json`
 checks native H round trips, responsive status/analysis, a delayed Python request,
 and reconciliation after restarting the MCP process. It does not hang or kill SolidWorks.
@@ -84,16 +85,11 @@ Front/Top/Right with English and Polish plane names, each through extrusion,
 exact bounds, native health, save/reopen and STEP. See the
 [reproduction and native results](issue-1-standard-planes.md).
 
-The Bender case studies record earlier versions and identify their exact scope.
-The 24-body case did not export. The nine-body case has a validated historical
-export and separate assembly checks. Neither is presented as a new 6.30.0rc1 run.
-
-To verify documentation and distributed evidence without connecting to CAD:
+To verify documentation without connecting to CAD:
 
 ```powershell
 python scripts/generate_tool_docs.py --check
 python tests/check_skill_docs.py --skill skills/solidworks-mcp
-python examples/bender/check_evidence.py
 ```
 
 ## Optional model acceptance

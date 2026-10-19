@@ -13,6 +13,7 @@ from pathlib import Path
 from PIL import Image
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from fixtures.reference_image import write_reference
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -26,6 +27,7 @@ model.rounded_prism('Flat',10,H,2,1,center=(15,H/2,0))
 
 
 async def acceptance(output, reuse=False):
+    reference = write_reference(output.with_suffix('.reference.png'))
     params=StdioServerParameters(command=sys.executable,args=['-X','utf8',str(ROOT/'solidworks_mcp_server.py')],cwd=str(ROOT))
     report={'status':'IN_PROGRESS','timings_sec':{}}
     async with stdio_client(params) as (read,write):
@@ -38,10 +40,10 @@ async def acceptance(output, reuse=False):
                 assert not r.isError, r
                 return r
             with SessionLease():
-                r=await call('measure_reference',{'image_path':'D:/TMP/bender/reference_front_approved.png',
-                    'projection':'front','calibration':{'pixel_distance':1250,'length_mm':150},
-                    'queries':[{'id':'torso_width','kind':'width_at_height','region':[365,600,690,880],'y':700},
-                               {'id':'hidden_depth','kind':'depth_range','region':[365,600,690,880],'y':700}],
+                r=await call('measure_reference',{'image_path':str(reference),
+                    'projection':'front','calibration':{'pixel_distance':200,'length_mm':100},
+                    'queries':[{'id':'bar_width','kind':'width_at_height','region':[10,10,190,230],'y':120},
+                               {'id':'hidden_depth','kind':'depth_range','region':[10,10,190,230],'y':120}],
                     'annotation_directory':str(output.parent/'reference_crops')})
                 report['reference']=r.structuredContent['data']
                 assert r.structuredContent['data']['cad_entities_created']==0

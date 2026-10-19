@@ -1,4 +1,4 @@
-"""Editing the embedded program by exact replacements (changes.md, P1-3)."""
+"""Editing the embedded program by exact replacements."""
 import hashlib
 import json
 import tempfile
@@ -15,7 +15,7 @@ from solidworks_mcp.shape_tools import SHAPE_TOOLS
 from solidworks_mcp.tool_registry import dispatch_new_tool
 
 MODULE = 'solidworks_mcp.automation.shape_service.'
-FIXTURE = (Path(__file__).parent / 'fixtures' / 'bender_program.py').read_text(encoding='utf-8')
+FIXTURE = (Path(__file__).parent / 'fixtures' / 'parametric_assembly.py').read_text(encoding='utf-8')
 SOURCE = ('H = model.parameter("H", 150)\n'
           'u = H / 150\n'
           'a = model.dome("A", 4*u, 2*u)\n'
@@ -67,14 +67,14 @@ class ApplyPatchTests(unittest.TestCase):
         self.assertEqual(changed_line_count('a\n', 'a\n'), 0)
 
     def test_reference_one_number_edit_is_a_small_call(self):
-        # changes.md quotes 27.8; the saved reference program has the 17.8 mm middle prism.
-        change = [{'old': '17.8*u, 12.0*u', 'new': '17.8*u, 11.0*u'}]
+        # A local slot-size edit stays much smaller than resending the complete assembly.
+        change = [{'old': '1.7*u + Clr, 1.7*u + Clr', 'new': '1.7*u + Clr, 1.8*u + Clr'}]
         patched = apply_patch(FIXTURE, change)
         self.assertEqual(changed_line_count(FIXTURE, patched), 1)
-        call = {'mode': 'edit', 'document_path': 'D:\\TMP\\retest-01\\work\\Bender.SLDPRT',
+        call = {'mode': 'edit', 'document_path': 'C:\\Tests\\Assembly.SLDPRT',
                 'expected_revision': 'a' * 64, 'patch': change}
         self.assertLessEqual(len(json.dumps(call)), 300)
-        self.assertGreater(len(FIXTURE), 9000)
+        self.assertLess(len(json.dumps(call)), len(FIXTURE) / 4)
 
 
 class EditedProgramTests(unittest.TestCase):

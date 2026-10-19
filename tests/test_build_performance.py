@@ -1,4 +1,4 @@
-"""Build-time behaviour that keeps long models fast (global-changes.md, G3) and memory signals."""
+"""Build-time behaviour that keeps long models fast and memory signals."""
 import os
 import unittest
 from types import SimpleNamespace

@@ -1,4 +1,4 @@
-"""Regression evidence for the Bender post-retest polish; no native COM."""
+"""Regression checks for dimension formatting, mesh cleanup and edit compatibility; no native COM."""
 import math
 import tempfile
 import unittest

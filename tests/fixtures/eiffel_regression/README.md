@@ -1,8 +1,10 @@
 # Eiffel union and export regression
 
 `source.py` is the original 128-node 150 mm tower; `manifest.json` is its
-6.29.5 accepted delivery. Keep these files unchanged. Native control copy:
-`D:\TMP\3dmodels\evidence\control_model.SLDPRT` (external binary fixture).
+6.29.5 accepted delivery, with machine-local paths redacted for publication.
+Preserve the source geometry and recorded hashes. The native control copy is
+an external binary fixture; pass its location to `live_export_benchmark.py`
+with `--source`.
 
 SHA-256: `eb6e6deeb16a39f3735b9b799ea448e79eff8fc4cfda1c43ef4cd7481627cbe0`.
 Original revision: `48e0512862f0f1e5b5e562e420a9ae3da4314011f23a66f2262fbf8d5bbaaff3`.

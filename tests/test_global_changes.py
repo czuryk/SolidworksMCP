@@ -1,4 +1,4 @@
-"""Offline checks of the global-changes.md items: G4-G8."""
+"""Offline checks for shape primitives, orientation, placement and compact responses."""
 import asyncio
 import json
 import os
@@ -277,12 +277,12 @@ class CompactAnswerTests(unittest.TestCase):
                 'components': [{'name': 'Head', 'id': 'x' * 32 + ':Head', 'declared_recipe': 'combine',
                                 'native_feature_type': 'Combine'}],
                 'surface_types': {'plane': 6, 'cylinder': 20, 'bspline': 16}}
-        image = {'view': 'front', 'path': 'D:\\work\\Bender_views\\' + 'c' * 32 + '\\front.png',
-                 'document': 'D:\\work\\Bender.SLDPRT', 'revision': 'a' * 64, 'configuration': 'Default',
+        image = {'view': 'front', 'path': 'D:\\work\\Assembly_views\\' + 'c' * 32 + '\\front.png',
+                 'document': 'D:\\work\\Assembly.SLDPRT', 'revision': 'a' * 64, 'configuration': 'Default',
                  'size_px': [1000, 1000], 'sha256': 'd' * 64, 'native_scale': 1.5, 'perspective': False}
-        full = {'document': 'D:\\work\\Bender.SLDPRT', 'revision': 'a' * 64, 'configuration': 'Default',
+        full = {'document': 'D:\\work\\Assembly.SLDPRT', 'revision': 'a' * 64, 'configuration': 'Default',
                 'update_stamp': 771, 'components': None, 'bodies': [dict(body, name=name) for name in self.BODIES],
-                'directory': 'D:\\work\\Bender_views\\' + 'c' * 32,
+                'directory': 'D:\\work\\Assembly_views\\' + 'c' * 32,
                 'bbox_mm': {'min': [-31.1, 0, -16.007], 'max': [31.1, 150, 17.432]},
                 'bbox_method': 'native_approximate_GetBodyBox',
                 'images': [dict(image, view=view) for view in ('front', 'right', 'isometric')], 'sections': [],

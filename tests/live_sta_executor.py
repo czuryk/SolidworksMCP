@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from fixtures.reference_image import write_reference
 
 ROOT = Path(__file__).resolve().parents[1]
 PROGRAM = """H=model.parameter('H',40)
@@ -16,6 +17,7 @@ model.rounded_prism('Flat',10,H,2,1,center=(15,H/2,0))
 
 
 async def acceptance(output, report_path):
+    reference = write_reference(output.with_suffix('.reference.png'))
     params = StdioServerParameters(command=sys.executable, args=['-X','utf8',str(ROOT/'solidworks_mcp_server.py')], cwd=str(ROOT))
     report = {'status':'IN_PROGRESS', 'calls':[]}
 
@@ -69,8 +71,8 @@ async def acceptance(output, report_path):
                 await asyncio.sleep(.15)
                 state = (await call(session,'get_executor_status',{})).structuredContent['data']
                 assert state['worker_busy']
-                await call(session,'measure_reference',{'image_path':'D:/TMP/bender/reference_front_approved.png',
-                    'queries':[{'id':'width','kind':'width_at_height','region':[365,600,690,880],'y':700}]})
+                await call(session,'measure_reference',{'image_path':str(reference),
+                    'queries':[{'id':'width','kind':'width_at_height','region':[10,10,190,230],'y':120}]})
                 queued = await call(session,'get_document_info',{'execution_timeout_sec':.05},False)
                 assert queued.structuredContent['error_name']=='NOT_EXECUTED'
                 result = (await call(session,'get_job_result',{'job_id':background['job_id'],'timeout':5})).structuredContent['data']['operation']

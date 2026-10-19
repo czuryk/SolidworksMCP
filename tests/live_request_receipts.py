@@ -16,7 +16,9 @@ model.rounded_prism('Flat',10,H,2,1,center=(15,H/2,0))
 """
 
 
-async def acceptance(output, report_path):
+async def acceptance(output, report_path, other_document):
+    if not other_document.is_file() or other_document == output:
+        raise ValueError('Supply a separate existing part with --other-document.')
     params=StdioServerParameters(command=sys.executable,args=['-X','utf8',str(ROOT/'solidworks_mcp_server.py')],cwd=str(ROOT))
     report={'status':'IN_PROGRESS','calls':[]}
     async def call(session,name,args,success=True):
@@ -66,7 +68,7 @@ async def acceptance(output, report_path):
                 report['mcp_restart_replay']=retry
                 state=await call(session,'get_request_status',{'idempotency_key':edit['idempotency_key']})
                 assert state['data']['receipt']['status']=='COMPLETED'
-                await call(session,'open_document',{'filepath':'D:/TMP/bender/mcp_batch07/Executor_01.SLDPRT'})
+                await call(session,'open_document',{'filepath':str(other_document)})
                 switched=await call(session,'execute_model_code',edit,False)
                 assert switched['error_name']=='DOCUMENT_MISMATCH'
                 await call(session,'open_document',{'filepath':str(output)})
@@ -114,4 +116,5 @@ async def acceptance(output, report_path):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--output',required=True);parser.add_argument('--report',required=True)
-    args=parser.parse_args();asyncio.run(acceptance(Path(args.output).resolve(),Path(args.report).resolve()))
+    parser.add_argument('--other-document', required=True, help='Existing separate part for the document-switch check')
+    args=parser.parse_args();asyncio.run(acceptance(Path(args.output).resolve(),Path(args.report).resolve(),Path(args.other_document).resolve()))

@@ -1,4 +1,4 @@
-"""Recovery after the MCP owner process is lost (changes.md, P1-1)."""
+"""Recovery after the MCP owner process is lost."""
 import asyncio
 import tempfile
 import time
