@@ -1,5 +1,9 @@
 # SolidworksMCP
 
+[![Watch the modeling comparison](https://i.ytimg.com/vi/Kvxh_MFXEXc/maxresdefault.jpg)](https://www.youtube.com/watch?v=Kvxh_MFXEXc)
+
+[Watch the modeling comparison](https://www.youtube.com/watch?v=Kvxh_MFXEXc)
+
 ## Major Update
 
 From a short description and reference images to **native, editable SOLIDWORKS
