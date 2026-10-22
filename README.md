@@ -44,7 +44,7 @@ or [follow the installation steps](docs/setup.md#install-the-companion-skill).
 [Modeling guide](docs/modeling-guide.md) · [All tools](docs/tools.md)
 
 <details>
-<summary>Main tools</summary>
+<summary><h2>Main tools</h2></summary>
 
 - [`get_model_context`](docs/tools.md#get_model_context) — Read the active model, parameters, bodies and editable source.
 - [`model_api_lookup`](docs/tools.md#model_api_lookup) — Find modeling commands, examples and ready-to-use joint templates.
@@ -56,6 +56,46 @@ or [follow the installation steps](docs/setup.md#install-the-companion-skill).
 - [`export_model`](docs/tools.md#export_model) — Export validated SLDPRT, STEP and per-body STL with a results manifest.
 
 [And more.](docs/tools.md)
+
+</details>
+
+<details>
+<summary><h2>Additional tools</h2></summary>
+
+Discover and call these operations through [`expert_tools`](docs/tools.md#expert_tools).
+
+- [`create_parametric_sketch`](docs/tools.md#create_parametric_sketch) — Build a sketch with named geometry, constraints, dimensions and equations.
+- [`image_to_sketch`](docs/tools.md#image_to_sketch) — Trace raster drawings and silhouettes into validated sketch geometry.
+- [`add_dimensions_batch`](docs/tools.md#add_dimensions_batch) — Add and verify multiple driving dimensions in one operation.
+- [`analyze_sketch_dof`](docs/tools.md#analyze_sketch_dof) — Find missing constraints, free motions and conflicting sketch relations.
+- [`create_sketch_on_face`](docs/tools.md#create_sketch_on_face) — Start a sketch directly on an existing body face.
+- [`advanced_extrude`](docs/tools.md#advanced_extrude) — Create a verified extrusion with explicit start, end and body-merge conditions.
+- [`advanced_cut`](docs/tools.md#advanced_cut) — Cut selected bodies with controlled depth, end conditions and scope.
+- [`create_revolved_body`](docs/tools.md#create_revolved_body) — Revolve a parametric profile, including arcs and splines, into a separate body.
+- [`create_swept_member`](docs/tools.md#create_swept_member) — Sweep a circular, elliptical or custom profile along a path.
+- [`fillet_edges`](docs/tools.md#fillet_edges) — Round selected edges with a verified constant-radius fillet.
+- [`chamfer_edges`](docs/tools.md#chamfer_edges) — Bevel selected edges by distance and angle.
+- [`shell`](docs/tools.md#shell) — Hollow a body to a specified wall thickness, optionally removing faces.
+- [`mirror_feature`](docs/tools.md#mirror_feature) — Mirror features or bodies across a plane or planar face.
+- [`linear_pattern`](docs/tools.md#linear_pattern) — Repeat features along a direction at a defined spacing.
+- [`circular_pattern`](docs/tools.md#circular_pattern) — Repeat features around an axis at a defined angle.
+- [`reference_plane`](docs/tools.md#reference_plane) — Create a construction plane offset from an existing plane or face.
+- [`create_multibody_insert`](docs/tools.md#create_multibody_insert) — Build a matching insert and host pocket with verified clearance.
+- [`check_clearance`](docs/tools.md#check_clearance) — Measure the gap or overlap between two named bodies.
+- [`probe_section`](docs/tools.md#probe_section) — Sample a section of visible geometry with a radial set of rays.
+- [`probe_rays`](docs/tools.md#probe_rays) — Locate the first visible surface hit along each ray in a batch.
+- [`set_body_color`](docs/tools.md#set_body_color) — Change body color while preserving other material properties.
+- [`set_body_transparency`](docs/tools.md#set_body_transparency) — Adjust body transparency and verify the applied value.
+- [`zoom_to`](docs/tools.md#zoom_to) — Focus the working view on selected bodies, a feature or a region.
+- [`open_document`](docs/tools.md#open_document) — Open an existing SOLIDWORKS document.
+- [`save_document`](docs/tools.md#save_document) — Save the active document to its current or a specified path.
+- [`run_transaction`](docs/tools.md#run_transaction) — Execute supported operations with checkpoints, checks and rollback.
+- [`execute_cad_plan`](docs/tools.md#execute_cad_plan) — Run a bounded operation sequence with conditions and references to earlier results.
+- [`execute_python`](docs/tools.md#execute_python) — Run custom Python against the live SOLIDWORKS API with shared COM helpers.
+- [`get_capabilities`](docs/tools.md#get_capabilities) — Check supported operations, export formats and optional vectorization readiness.
+- [`restart_solidworks`](docs/tools.md#restart_solidworks) — Restart SOLIDWORKS with unsaved-document checks and verified reconnection.
+
+[And more.](docs/tools.md#expert-index)
 
 </details>
 
@@ -104,46 +144,6 @@ new absolute `.SLDPRT` path to build. [Continue with the modeling guide](docs/mo
 | Find any tool, its parameters or its replacement | [Complete tool reference](docs/tools.md) |
 | Read test coverage and remaining limits | [Validation](docs/validation.md) |
 | Follow the release history | [Changelog](CHANGELOG.md) |
-
-<details>
-<summary>Version, compatibility and test scope</summary>
-
-Current candidate: **6.30.0rc1**. Requires Windows and an installed, licensed
-SOLIDWORKS session. The documented native fixtures were qualified on SOLIDWORKS
-2026 SP2.1; Python 3.11 was tested. SOLIDWORKS 2025 compatibility guards remain,
-but the new recipes have not been qualified on that version.
-
-Shape programs support **512 components**, including consumed nodes and patterns.
-The published code snapshot passed **731 unit and regression tests**. The default
-catalog has 13 tools, with 84 more expert operations available through discovery.
-The full schemas are [versioned alongside the documentation](docs/tool-schemas.json).
-
-Standard-plane sketches support localized and renamed planes.
-[Issue #1: reproduction, fix and six native checks](docs/issue-1-standard-planes.md).
-
-The Bender showcase records October 5–7 runs on 6.27.0–6.29.5, not a fresh
-6.30.0rc1 native acceptance run. The detailed character run cancelled export;
-the glue-assembly run has a validated export and separate assembly checks.
-Detailed source programs and test records are maintained internally.
-
-Long CAD sessions can accumulate substantial memory. Export validation does not
-certify every manufacturing property. [Recorded evidence and limitations](docs/validation.md).
-
-</details>
-
-<details>
-<summary>Developer checks</summary>
-
-```powershell
-python -m unittest discover -s tests -p "test_*.py"
-python scripts/generate_tool_docs.py --check
-python tests/check_skill_docs.py --skill skills/solidworks-mcp
-```
-
-The main checkout, documentation and showcase image use ordinary Git. Optional
-line-art weights live in [SolidworksMCP-models](https://github.com/czuryk/SolidworksMCP-models).
-
-</details>
 
 ## License
 
